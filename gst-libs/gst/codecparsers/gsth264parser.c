@@ -321,18 +321,6 @@ GST_NAL_READER_READ_BITS (8);
 GST_NAL_READER_READ_BITS (16);
 GST_NAL_READER_READ_BITS (32);
 
-#define GST_NAL_READER_PEAK_BITS(bits) \
-static gboolean \
-nal_reader_peek_bits_uint##bits (const NalReader *nr, guint##bits *val, guint nbits) \
-{ \
-  NalReader tmp; \
-  \
-  tmp = *nr; \
-  return nal_reader_get_bits_uint##bits (&tmp, val, nbits); \
-}
-
-GST_NAL_READER_PEAK_BITS (8);
-
 static gboolean
 nal_reader_get_ue (NalReader * nr, guint32 * val)
 {
@@ -500,33 +488,32 @@ scan_for_start_codes (const guint8 * data, guint size)
 static gboolean
 gst_h264_parser_more_data (NalReader * nr)
 {
-  guint remaining;
+  NalReader nr_tmp;
+  guint remaining, nbits;
+  guint8 rbsp_stop_one_bit, zero_bits;
 
   remaining = nal_reader_get_remaining (nr);
   if (remaining == 0)
     return FALSE;
 
-  if (remaining <= 8) {
-    guint8 rbsp_stop_one_bit;
+  nr_tmp = *nr;
+  nr = &nr_tmp;
 
-    if (!nal_reader_peek_bits_uint8 (nr, &rbsp_stop_one_bit, 1))
+  if (!nal_reader_get_bits_uint8 (nr, &rbsp_stop_one_bit, 1))
+    return FALSE;
+  if (!rbsp_stop_one_bit)
+    return TRUE;
+
+  nbits = --remaining % 8;
+  while (remaining > 0) {
+    if (!nal_reader_get_bits_uint8 (nr, &zero_bits, nbits))
       return FALSE;
-
-    if (rbsp_stop_one_bit == 1) {
-      guint8 zero_bits;
-
-      if (remaining == 1)
-        return FALSE;
-
-      if (!nal_reader_peek_bits_uint8 (nr, &zero_bits, remaining))
-        return FALSE;
-
-      if ((zero_bits - (1 << (remaining - 1))) == 0)
-        return FALSE;
-    }
+    if (zero_bits != 0)
+      return TRUE;
+    remaining -= nbits;
+    nbits = 8;
   }
-
-  return TRUE;
+  return FALSE;
 }
 
 /****** Parsing functions *****/
