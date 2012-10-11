@@ -277,7 +277,7 @@ find_psc (GstByteReader * br)
       psc_pos = gst_byte_reader_get_pos (br);
       break;
     } else
-      gst_byte_reader_skip (br, 1);
+      gst_byte_reader_skip_unchecked (br, 1);
   }
 
 failed:
@@ -328,7 +328,7 @@ compute_resync_marker_size (const GstMpeg4VideoObjectPlane * vop,
         *mask = 0xfffff000;
         break;
       case 20:
-        *pattern = 0x0000080;
+        *pattern = 0x00000800;
         *mask = 0xfffff800;
         break;
       case 21:
@@ -543,7 +543,7 @@ gst_h263_parse (GstMpeg4Packet * packet,
   packet->offset = off1 + offset;
   packet->data = data;
 
-  gst_byte_reader_skip (&br, 3);
+  gst_byte_reader_skip_unchecked (&br, 3);
   off2 = find_psc (&br);
 
   if (off2 == -1) {
@@ -943,6 +943,9 @@ gst_mpeg4_parse_video_object_layer (GstMpeg4VideoObjectLayer * vol,
   if (vo) {
     vol->verid = vo->verid;
     vol->priority = vo->priority;
+  } else {
+    vol->verid = 1;
+    vol->priority = 0;
   }
 
   vol->low_delay = FALSE;
@@ -1013,7 +1016,6 @@ gst_mpeg4_parse_video_object_layer (GstMpeg4VideoObjectLayer * vol,
 
       vol->latter_half_vbv_buffer_size =
           gst_bit_reader_get_bits_uint8_unchecked (&br, 3);
-      MARKER_UNCHECKED (&br);
 
       vol->vbv_buffer_size = (vol->first_half_vbv_buffer_size << 15) |
           vol->latter_half_vbv_buffer_size;
@@ -1075,10 +1077,9 @@ gst_mpeg4_parse_video_object_layer (GstMpeg4VideoObjectLayer * vol,
     READ_UINT8 (&br, vol->interlaced, 1);
     READ_UINT8 (&br, vol->obmc_disable, 1);
 
-    if (vol->verid == 0x1) {
+    if (vol->verid == 0x1)
       READ_UINT8 (&br, tmp, 1);
-      vol->sprite_enable = tmp;
-    } else
+    else
       READ_UINT8 (&br, tmp, 2);
     vol->sprite_enable = tmp;
 
@@ -1116,7 +1117,7 @@ gst_mpeg4_parse_video_object_layer (GstMpeg4VideoObjectLayer * vol,
             gst_bit_reader_get_bits_uint8_unchecked (&br, 1);
     }
 
-    if (vol->shape != GST_MPEG4_RECTANGULAR)
+    if (vol->verid != 0x1 && vol->shape != GST_MPEG4_RECTANGULAR)
       READ_UINT8 (&br, vol->sadct_disable, 1);
 
     READ_UINT8 (&br, vol->not_8_bit, 1);
@@ -1160,9 +1161,35 @@ gst_mpeg4_parse_video_object_layer (GstMpeg4VideoObjectLayer * vol,
       READ_UINT8 (&br, vol->quarter_sample, 1);
 
     READ_UINT8 (&br, vol->complexity_estimation_disable, 1);
-    if (!vol->complexity_estimation_disable)
-      goto complexity_estimation_error;
+    if (!vol->complexity_estimation_disable) {
+      guint8 estimation_method;
+      guint8 estimation_disable;
 
+      /* skip unneeded properties */
+      READ_UINT8 (&br, estimation_method, 2);
+      if (estimation_method < 2) {
+        READ_UINT8 (&br, estimation_disable, 1);
+        if (!estimation_disable)
+          SKIP (&br, 6);
+        READ_UINT8 (&br, estimation_disable, 1);
+        if (!estimation_disable)
+          SKIP (&br, 4);
+        CHECK_MARKER (&br);
+        READ_UINT8 (&br, estimation_disable, 1);
+        if (!estimation_disable)
+          SKIP (&br, 4);
+        READ_UINT8 (&br, estimation_disable, 1);
+        if (!estimation_disable)
+          SKIP (&br, 6);
+        CHECK_MARKER (&br);
+
+        if (estimation_method == 1) {
+          READ_UINT8 (&br, estimation_disable, 1);
+          if (!estimation_disable)
+            SKIP (&br, 2);
+        }
+      }
+    }
 
     READ_UINT8 (&br, vol->resync_marker_disable, 1);
     READ_UINT8 (&br, vol->data_partitioned, 1);
@@ -1170,14 +1197,14 @@ gst_mpeg4_parse_video_object_layer (GstMpeg4VideoObjectLayer * vol,
     if (vol->data_partitioned)
       READ_UINT8 (&br, vol->reversible_vlc, 1);
 
-    if (vol->verid != 0x01)
+    if (vol->verid != 0x01) {
       READ_UINT8 (&br, vol->newpred_enable, 1);
+      if (vol->newpred_enable)
+        /* requested_upstream_message_type and newpred_segment_type */
+        SKIP (&br, 3);
 
-    if (vol->newpred_enable)
-      /* requested_upstream_message_type and newpred_segment_type */
-      SKIP (&br, 3);
-
-    READ_UINT8 (&br, vol->reduced_resolution_vop_enable, 1);
+      READ_UINT8 (&br, vol->reduced_resolution_vop_enable, 1);
+    }
 
     READ_UINT8 (&br, vol->scalability, 1);
     if (vol->scalability) {
@@ -1200,10 +1227,6 @@ failed:
 
 wrong_start_code:
   GST_WARNING ("got buffer with wrong start code");
-  goto failed;
-
-complexity_estimation_error:
-  GST_WARNING ("don't support complexity estimation");
   goto failed;
 }
 

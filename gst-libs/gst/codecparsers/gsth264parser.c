@@ -136,6 +136,32 @@ static const guint8 zigzag_4x4[16] = {
   7, 11, 14, 15,
 };
 
+typedef struct
+{
+  guint par_n, par_d;
+} PAR;
+
+/* Table E-1 - Meaning of sample aspect ratio indicator (1..16) */
+static PAR aspect_ratios[17] = {
+  {0, 0},
+  {1, 1},
+  {12, 11},
+  {10, 11},
+  {16, 11},
+  {40, 33},
+  {24, 11},
+  {20, 11},
+  {32, 11},
+  {80, 33},
+  {18, 11},
+  {15, 11},
+  {64, 33},
+  {160, 99},
+  {4, 3},
+  {3, 2},
+  {2, 1}
+};
+
 /* Compute Ceil(Log2(v)) */
 /* Derived from branchless code for integer log2(v) from:
    <http://graphics.stanford.edu/~seander/bithacks.html#IntegerLog> */
@@ -167,6 +193,7 @@ typedef struct
   const guint8 *data;
   guint size;
 
+  guint n_epb;                  /* Number of emulation prevention bytes */
   guint byte;                   /* Byte position */
   guint bits_in_cache;          /* bitpos in the cache of next bit */
   guint8 first_byte;
@@ -178,6 +205,7 @@ nal_reader_init (NalReader * nr, const guint8 * data, guint size)
 {
   nr->data = data;
   nr->size = size;
+  nr->n_epb = 0;
 
   nr->byte = 0;
   nr->bits_in_cache = 0;
@@ -186,7 +214,7 @@ nal_reader_init (NalReader * nr, const guint8 * data, guint size)
   nr->cache = 0xff;
 }
 
-static gboolean
+static inline gboolean
 nal_reader_read (NalReader * nr, guint nbits)
 {
   if (G_UNLIKELY (nr->byte * 8 + (nbits - nr->bits_in_cache) > nr->size * 8)) {
@@ -211,6 +239,7 @@ nal_reader_read (NalReader * nr, guint nbits)
         ((nr->cache & 0xff) == 0)) {
       /* next byte goes unconditionally to the cache, even if it's 0x03 */
       check_three_byte = FALSE;
+      nr->n_epb++;
       goto next_byte;
     }
     nr->cache = (nr->cache << 8) | nr->first_byte;
@@ -224,8 +253,6 @@ nal_reader_read (NalReader * nr, guint nbits)
 static inline gboolean
 nal_reader_skip (NalReader * nr, guint nbits)
 {
-  g_return_val_if_fail (nr != NULL, FALSE);
-
   if (G_UNLIKELY (!nal_reader_read (nr, nbits)))
     return FALSE;
 
@@ -237,8 +264,6 @@ nal_reader_skip (NalReader * nr, guint nbits)
 static inline gboolean
 nal_reader_skip_to_byte (NalReader * nr)
 {
-  g_return_val_if_fail (nr != NULL, FALSE);
-
   if (nr->bits_in_cache == 0) {
     if (G_LIKELY ((nr->size - nr->byte) > 0))
       nr->byte++;
@@ -263,15 +288,17 @@ nal_reader_get_remaining (const NalReader * nr)
   return (nr->size - nr->byte) * 8 + nr->bits_in_cache;
 }
 
+static inline guint
+nal_reader_get_epb_count (const NalReader * nr)
+{
+  return nr->n_epb;
+}
+
 #define GST_NAL_READER_READ_BITS(bits) \
 static gboolean \
 nal_reader_get_bits_uint##bits (NalReader *nr, guint##bits *val, guint nbits) \
 { \
   guint shift; \
-  \
-  g_return_val_if_fail (nr != NULL, FALSE); \
-  g_return_val_if_fail (val != NULL, FALSE); \
-  g_return_val_if_fail (nbits <= bits, FALSE); \
   \
   if (!nal_reader_read (nr, nbits)) \
     return FALSE; \
@@ -300,7 +327,6 @@ nal_reader_peek_bits_uint##bits (const NalReader *nr, guint##bits *val, guint nb
 { \
   NalReader tmp; \
   \
-  g_return_val_if_fail (nr != NULL, FALSE); \
   tmp = *nr; \
   return nal_reader_get_bits_uint##bits (&tmp, val, nbits); \
 }
@@ -326,7 +352,8 @@ nal_reader_get_ue (NalReader * nr, guint32 * val)
           return FALSE;
   }
 
-  g_return_val_if_fail (i <= 32, FALSE);
+  if (G_UNLIKELY (i > 32))
+    return FALSE;
 
   if (G_UNLIKELY (!nal_reader_get_bits_uint32 (nr, &value, i)))
     return FALSE;
@@ -336,7 +363,7 @@ nal_reader_get_ue (NalReader * nr, guint32 * val)
   return TRUE;
 }
 
-static gboolean
+static inline gboolean
 nal_reader_get_se (NalReader * nr, gint32 * val)
 {
   guint32 value;
@@ -551,6 +578,8 @@ gst_h264_parse_vui_parameters (GstH264SPS * sps, NalReader * nr)
   vui->chroma_sample_loc_type_top_field = 0;
   vui->chroma_sample_loc_type_bottom_field = 0;
   vui->low_delay_hrd_flag = 0;
+  vui->par_n = 0;
+  vui->par_d = 0;
 
   READ_UINT8 (nr, vui->aspect_ratio_info_present_flag, 1);
   if (vui->aspect_ratio_info_present_flag) {
@@ -558,6 +587,11 @@ gst_h264_parse_vui_parameters (GstH264SPS * sps, NalReader * nr)
     if (vui->aspect_ratio_idc == EXTENDED_SAR) {
       READ_UINT16 (nr, vui->sar_width, 16);
       READ_UINT16 (nr, vui->sar_height, 16);
+      vui->par_n = vui->sar_width;
+      vui->par_d = vui->sar_height;
+    } else if (vui->aspect_ratio_idc <= 16) {
+      vui->par_n = aspect_ratios[vui->aspect_ratio_idc].par_n;
+      vui->par_d = aspect_ratios[vui->aspect_ratio_idc].par_d;
     }
   }
 
@@ -1300,7 +1334,8 @@ gst_h264_parser_identify_nalu_avc (GstH264NalParser * nalparser,
   size = size - offset;
   gst_bit_reader_init (&br, data + offset, size);
 
-  gst_bit_reader_get_bits_uint32 (&br, &nalu->size, nal_length_size * 8);
+  nalu->size = gst_bit_reader_get_bits_uint32_unchecked (&br,
+      nal_length_size * 8);
   nalu->sc_offset = offset;
   nalu->offset = offset + nal_length_size;
 
@@ -1554,7 +1589,7 @@ gst_h264_parse_sps (GstH264NalUnit * nalu, GstH264SPS * sps,
 
 error:
   GST_WARNING ("error parsing \"Sequence parameter set\"");
-
+  sps->valid = FALSE;
   return GST_H264_PARSER_ERROR;
 }
 
@@ -1684,6 +1719,7 @@ done:
 
 error:
   GST_WARNING ("error parsing \"Picture parameter set\"");
+  pps->valid = FALSE;
   return GST_H264_PARSER_ERROR;
 }
 
@@ -1748,7 +1784,7 @@ gst_h264_parser_parse_slice_hdr (GstH264NalParser * nalparser,
 
   GST_DEBUG ("parsing \"Slice header\", slice type %u", slice->type);
 
-  READ_UE_ALLOWED (&nr, pps_id, 0, GST_H264_MAX_PPS_COUNT);
+  READ_UE_ALLOWED (&nr, pps_id, 0, GST_H264_MAX_PPS_COUNT - 1);
   pps = gst_h264_parser_get_pps (nalparser, pps_id);
 
   if (!pps) {
@@ -1882,6 +1918,7 @@ gst_h264_parser_parse_slice_hdr (GstH264NalParser * nalparser,
   }
 
   slice->header_size = nal_reader_get_pos (&nr);
+  slice->n_emulation_prevention_bytes = nal_reader_get_epb_count (&nr);
 
   return GST_H264_PARSER_OK;
 
@@ -1940,10 +1977,11 @@ gst_h264_parser_parse_sei (GstH264NalParser * nalparser, GstH264NalUnit * nalu,
   if (sei->payloadType == GST_H264_SEI_BUF_PERIOD) {
     /* size not set; might depend on emulation_prevention_three_byte */
     res = gst_h264_parser_parse_buffering_period (nalparser,
-        &sei->buffering_period, &nr);
+        &sei->payload.buffering_period, &nr);
   } else if (sei->payloadType == GST_H264_SEI_PIC_TIMING) {
     /* size not set; might depend on emulation_prevention_three_byte */
-    res = gst_h264_parser_parse_pic_timing (nalparser, &sei->pic_timing, &nr);
+    res = gst_h264_parser_parse_pic_timing (nalparser,
+        &sei->payload.pic_timing, &nr);
   } else
     res = GST_H264_PARSER_OK;
 

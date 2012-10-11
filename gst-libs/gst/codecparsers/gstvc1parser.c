@@ -692,7 +692,7 @@ get_unary (GstBitReader * br, gint stop, gint len)
   guint8 current = 0xff;
 
   for (i = 0; i < len; i++) {
-    gst_bit_reader_get_bits_uint8 (br, &current, 1);
+    current = gst_bit_reader_get_bits_uint8_unchecked (br, 1);
     if (current == stop)
       return i;
   }
@@ -837,10 +837,13 @@ parse_sequence_header_advanced (GstVC1SeqHdr * seqhdr, GstBitReader * br)
       READ_UINT8 (br, advanced->aspect_ratio, 4);
 
       if (advanced->aspect_ratio == 15) {
+        /* Aspect Width (6.1.14.3.2) and Aspect Height (6.1.14.3.3)
+         * syntax elements hold a binary encoding of sizes ranging
+         * from 1 to 256 */
         READ_UINT8 (br, advanced->aspect_horiz_size, 8);
         READ_UINT8 (br, advanced->aspect_vert_size, 8);
-        advanced->par_n = advanced->aspect_horiz_size;
-        advanced->par_d = advanced->aspect_vert_size;
+        advanced->par_n = 1 + advanced->aspect_horiz_size;
+        advanced->par_d = 1 + advanced->aspect_vert_size;
       } else {
         advanced->par_n = aspect_ratios[advanced->aspect_ratio].par_n;
         advanced->par_d = aspect_ratios[advanced->aspect_ratio].par_d;

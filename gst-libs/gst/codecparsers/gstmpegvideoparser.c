@@ -97,9 +97,8 @@ find_start_code (GstBitReader * b)
   while (gst_bit_reader_peek_bits_uint32 (b, &bits, 32)) {
     if (bits >> 8 == 0x1) {
       return TRUE;
-    } else {
-      gst_bit_reader_skip (b, 8);
-    }
+    } else if (gst_bit_reader_skip (b, 8) == FALSE)
+      break;
   }
 
   return FALSE;
@@ -108,32 +107,32 @@ failed:
   return FALSE;
 }
 
-/* Set the Pixel Aspect Ratio in our hdr from a DAR code in the data */
+/* Set the Pixel Aspect Ratio in our hdr from a ASR code in the data */
 static void
-set_par_from_dar (GstMpegVideoSequenceHdr * seqhdr, guint8 asr_code)
+set_par_from_asr_mpeg1 (GstMpegVideoSequenceHdr * seqhdr, guint8 asr_code)
 {
-  /* Pixel_width = DAR_width * display_vertical_size */
-  /* Pixel_height = DAR_height * display_horizontal_size */
-  switch (asr_code) {
-    case 0x02:                 /* 3:4 DAR = 4:3 pixels */
-      seqhdr->par_w = 4 * seqhdr->height;
-      seqhdr->par_h = 3 * seqhdr->width;
-      break;
-    case 0x03:                 /* 9:16 DAR */
-      seqhdr->par_w = 16 * seqhdr->height;
-      seqhdr->par_h = 9 * seqhdr->width;
-      break;
-    case 0x04:                 /* 1:2.21 DAR */
-      seqhdr->par_w = 221 * seqhdr->height;
-      seqhdr->par_h = 100 * seqhdr->width;
-      break;
-    case 0x01:                 /* Square pixels */
-      seqhdr->par_w = seqhdr->par_h = 1;
-      break;
-    default:
-      GST_DEBUG ("unknown/invalid aspect_ratio_information %d", asr_code);
-      break;
-  }
+  int ratios[16][2] = {
+    {0, 0},                     /* 0, Invalid */
+    {1, 1},                     /* 1, 1.0 */
+    {10000, 6735},              /* 2, 0.6735 */
+    {64, 45},                   /* 3, 0.7031 16:9 625 line */
+    {10000, 7615},              /* 4, 0.7615 */
+    {10000, 8055},              /* 5, 0.8055 */
+    {32, 27},                   /* 6, 0.8437 */
+    {10000, 8935},              /* 7, 0.8935 */
+    {10000, 9375},              /* 8, 0.9375 */
+    {10000, 9815},              /* 9, 0.9815 */
+    {10000, 10255},             /* 10, 1.0255 */
+    {10000, 10695},             /* 11, 1.0695 */
+    {8, 9},                     /* 12, 1.125 */
+    {10000, 11575},             /* 13, 1.1575 */
+    {10000, 12015},             /* 14, 1.2015 */
+    {0, 0},                     /* 15, invalid */
+  };
+  asr_code &= 0xf;
+
+  seqhdr->par_w = ratios[asr_code][0];
+  seqhdr->par_h = ratios[asr_code][1];
 }
 
 static void
@@ -157,24 +156,149 @@ set_fps_from_code (GstMpegVideoSequenceHdr * seqhdr, guint8 fps_code)
   }
 }
 
-static gboolean
-gst_mpeg_video_parse_sequence (GstMpegVideoSequenceHdr * seqhdr,
-    GstBitReader * br)
+/* @size and @offset are wrt current reader position */
+static inline guint
+scan_for_start_codes (const GstByteReader * reader, guint offset, guint size)
 {
+  const guint8 *data;
+  guint i = 0;
+
+  g_return_val_if_fail ((guint64) offset + size <= reader->size - reader->byte,
+      -1);
+
+  /* we can't find the pattern with less than 4 bytes */
+  if (G_UNLIKELY (size < 4))
+    return -1;
+
+  data = reader->data + reader->byte + offset;
+
+  while (i <= (size - 4)) {
+    if (data[i + 2] > 1) {
+      i += 3;
+    } else if (data[i + 1]) {
+      i += 2;
+    } else if (data[i] || data[i + 2] != 1) {
+      i++;
+    } else {
+      break;
+    }
+  }
+
+  if (i <= (size - 4))
+    return offset + i;
+
+  /* nothing found */
+  return -1;
+}
+
+/****** API *******/
+
+/**
+ * gst_mpeg_video_parse:
+ * @data: The data to parse
+ * @size: The size of @data
+ * @offset: The offset from which to start parsing
+ *
+ * Parses the MPEG 1/2 video bitstream contained in @data , and returns the
+ * detect packets as a list of #GstMpegVideoTypeOffsetSize.
+ *
+ * Returns: TRUE if a packet start code was found
+ */
+gboolean
+gst_mpeg_video_parse (GstMpegVideoPacket * packet,
+    const guint8 * data, gsize size, guint offset)
+{
+  gint off;
+  GstByteReader br;
+
+  if (!initialized) {
+    GST_DEBUG_CATEGORY_INIT (mpegvideo_parser_debug, "codecparsers_mpegvideo",
+        0, "Mpegvideo parser library");
+    initialized = TRUE;
+  }
+
+  if (size <= offset) {
+    GST_DEBUG ("Can't parse from offset %d, buffer is to small", offset);
+    return FALSE;
+  }
+
+  size -= offset;
+  gst_byte_reader_init (&br, &data[offset], size);
+
+  off = scan_for_start_codes (&br, 0, size);
+
+  if (off < 0) {
+    GST_DEBUG ("No start code prefix in this buffer");
+    return FALSE;
+  }
+
+  if (gst_byte_reader_skip (&br, off + 3) == FALSE)
+    goto failed;
+
+  if (gst_byte_reader_get_uint8 (&br, &packet->type) == FALSE)
+    goto failed;
+
+  packet->data = data;
+  packet->offset = offset + off + 4;
+  packet->size = -1;
+
+  /* try to find end of packet */
+  size -= off + 4;
+  off = scan_for_start_codes (&br, 0, size);
+
+  if (off > 0)
+    packet->size = off;
+
+  return TRUE;
+
+failed:
+  {
+    GST_WARNING ("Failed to parse");
+    return FALSE;
+  }
+}
+
+/**
+ * gst_mpeg_video_parse_sequence_header:
+ * @seqhdr: (out): The #GstMpegVideoSequenceHdr structure to fill
+ * @data: The data from which to parse the sequence header
+ * @size: The size of @data
+ * @offset: The offset in byte from which to start parsing @data
+ *
+ * Parses the @seqhdr Mpeg Video Sequence Header structure members from @data
+ *
+ * Returns: %TRUE if the seqhdr could be parsed correctly, %FALSE otherwize.
+ */
+gboolean
+gst_mpeg_video_parse_sequence_header (GstMpegVideoSequenceHdr * seqhdr,
+    const guint8 * data, gsize size, guint offset)
+{
+  GstBitReader br;
   guint8 bits;
   guint8 load_intra_flag, load_non_intra_flag;
 
+  g_return_val_if_fail (seqhdr != NULL, FALSE);
+
+  size -= offset;
+
+  if (size < 4)
+    return FALSE;
+
+  gst_bit_reader_init (&br, &data[offset], size);
+
   /* Setting the height/width codes */
-  READ_UINT16 (br, seqhdr->width, 12);
-  READ_UINT16 (br, seqhdr->height, 12);
+  READ_UINT16 (&br, seqhdr->width, 12);
+  READ_UINT16 (&br, seqhdr->height, 12);
 
-  READ_UINT8 (br, seqhdr->aspect_ratio_info, 4);
-  set_par_from_dar (seqhdr, seqhdr->aspect_ratio_info);
+  READ_UINT8 (&br, seqhdr->aspect_ratio_info, 4);
+  /* Interpret PAR according to MPEG-1. Needs to be reinterpreted
+   * later, if a sequence_display extension is seen */
+  set_par_from_asr_mpeg1 (seqhdr, seqhdr->aspect_ratio_info);
 
-  READ_UINT8 (br, seqhdr->frame_rate_code, 4);
+  READ_UINT8 (&br, seqhdr->frame_rate_code, 4);
   set_fps_from_code (seqhdr, seqhdr->frame_rate_code);
 
-  READ_UINT32 (br, seqhdr->bitrate_value, 18);
+  READ_UINT32 (&br, seqhdr->bitrate_value, 18);
   if (seqhdr->bitrate_value == 0x3ffff) {
     /* VBR stream */
     seqhdr->bitrate = 0;
@@ -183,31 +307,31 @@ gst_mpeg_video_parse_sequence (GstMpegVideoSequenceHdr * seqhdr,
     seqhdr->bitrate *= 400;
   }
 
-  READ_UINT8 (br, bits, 1);
+  READ_UINT8 (&br, bits, 1);
   if (bits != MARKER_BIT)
     goto failed;
 
   /* VBV buffer size */
-  READ_UINT16 (br, seqhdr->vbv_buffer_size_value, 10);
+  READ_UINT16 (&br, seqhdr->vbv_buffer_size_value, 10);
 
   /* constrained_parameters_flag */
-  READ_UINT8 (br, seqhdr->constrained_parameters_flag, 1);
+  READ_UINT8 (&br, seqhdr->constrained_parameters_flag, 1);
 
   /* load_intra_quantiser_matrix */
-  READ_UINT8 (br, load_intra_flag, 1);
+  READ_UINT8 (&br, load_intra_flag, 1);
   if (load_intra_flag) {
     gint i;
     for (i = 0; i < 64; i++)
-      READ_UINT8 (br, seqhdr->intra_quantizer_matrix[mpeg_zigzag_8x8[i]], 8);
+      READ_UINT8 (&br, seqhdr->intra_quantizer_matrix[mpeg_zigzag_8x8[i]], 8);
   } else
     memcpy (seqhdr->intra_quantizer_matrix, default_intra_quantizer_matrix, 64);
 
   /* non intra quantizer matrix */
-  READ_UINT8 (br, load_non_intra_flag, 1);
+  READ_UINT8 (&br, load_non_intra_flag, 1);
   if (load_non_intra_flag) {
     gint i;
     for (i = 0; i < 64; i++)
-      READ_UINT8 (br, seqhdr->non_intra_quantizer_matrix[mpeg_zigzag_8x8[i]],
+      READ_UINT8 (&br, seqhdr->non_intra_quantizer_matrix[mpeg_zigzag_8x8[i]],
           8);
   } else
     memset (seqhdr->non_intra_quantizer_matrix, 16, 64);
@@ -228,153 +352,6 @@ failed:
     memset (seqhdr, 0, sizeof (*seqhdr));
     return FALSE;
   }
-}
-
-static inline guint
-scan_for_start_codes (const GstByteReader * reader, guint offset, guint size)
-{
-  const guint8 *data;
-  guint32 state;
-  guint i;
-
-  g_return_val_if_fail (size > 0, -1);
-  g_return_val_if_fail ((guint64) offset + size <= reader->size - reader->byte,
-      -1);
-
-  /* we can't find the pattern with less than 4 bytes */
-  if (G_UNLIKELY (size < 4))
-    return -1;
-
-  data = reader->data + reader->byte + offset;
-
-  /* set the state to something that does not match */
-  state = 0xffffffff;
-
-  /* now find data */
-  for (i = 0; i < size; i++) {
-    /* throw away one byte and move in the next byte */
-    state = ((state << 8) | data[i]);
-    if (G_UNLIKELY ((state & 0xffffff00) == 0x00000100)) {
-      /* we have a match but we need to have skipped at
-       * least 4 bytes to fill the state. */
-      if (G_LIKELY (i >= 3))
-        return offset + i - 3;
-    }
-
-    /* TODO: reimplement making 010001 not detected as a sc
-     * Accelerate search for start code
-     * if (data[i] > 1) {
-     * while (i < (size - 4) && data[i] > 1) {
-     *   if (data[i + 3] > 1)
-     *     i += 4;
-     *   else
-     *     i += 1;
-     * }
-     * state = 0x00000100;
-     *}
-     */
-  }
-
-  /* nothing found */
-  return -1;
-}
-
-/****** API *******/
-
-/**
- * gst_mpeg_video_parse:
- * @data: The data to parse
- * @size: The size of @data
- * @offset: The offset from which to start parsing
- *
- * Parses the MPEG 1/2 video bitstream contained in @data , and returns the
- * detect packets as a list of #GstMpegVideoTypeOffsetSize.
- *
- * Returns: a #GList of #GstMpegVideoTypeOffsetSize
- */
-GList *
-gst_mpeg_video_parse (const guint8 * data, gsize size, guint offset)
-{
-  gint off, rsize;
-  GstByteReader br;
-  GList *ret = NULL;
-
-  size -= offset;
-
-  if (!initialized) {
-    GST_DEBUG_CATEGORY_INIT (mpegvideo_parser_debug, "codecparsers_mpegvideo",
-        0, "Mpegvideo parser library");
-    initialized = TRUE;
-  }
-
-  if (size <= 0) {
-    GST_DEBUG ("Can't parse from offset %d, buffer is to small", offset);
-    return NULL;
-  }
-
-  gst_byte_reader_init (&br, &data[offset], size);
-
-  off = scan_for_start_codes (&br, 0, size);
-
-  if (off < 0) {
-    GST_DEBUG ("No start code prefix in this buffer");
-    return NULL;
-  }
-
-  while (off >= 0 && off + 3 < size) {
-    GstMpegVideoTypeOffsetSize *codoffsize;
-
-    gst_byte_reader_skip (&br, off + 3);
-
-    codoffsize = g_malloc (sizeof (GstMpegVideoTypeOffsetSize));
-    gst_byte_reader_get_uint8 (&br, &codoffsize->type);
-
-    codoffsize->offset = gst_byte_reader_get_pos (&br) + offset;
-
-    rsize = gst_byte_reader_get_remaining (&br);
-    if (rsize <= 0) {
-      g_free (codoffsize);
-      break;
-    }
-
-    off = scan_for_start_codes (&br, 0, rsize);
-
-    codoffsize->size = off;
-
-    ret = g_list_prepend (ret, codoffsize);
-    codoffsize = ret->data;
-  }
-
-  return g_list_reverse (ret);
-}
-
-/**
- * gst_mpeg_video_parse_sequence_header:
- * @seqhdr: (out): The #GstMpegVideoSequenceHdr structure to fill
- * @data: The data from which to parse the sequence header
- * @size: The size of @data
- * @offset: The offset in byte from which to start parsing @data
- *
- * Parses the @seqhdr Mpeg Video Sequence Header structure members from @data
- *
- * Returns: %TRUE if the seqhdr could be parsed correctly, %FALSE otherwize.
- */
-gboolean
-gst_mpeg_video_parse_sequence_header (GstMpegVideoSequenceHdr * seqhdr,
-    const guint8 * data, gsize size, guint offset)
-{
-  GstBitReader br;
-
-  g_return_val_if_fail (seqhdr != NULL, FALSE);
-
-  size -= offset;
-
-  if (size < 4)
-    return FALSE;
-
-  gst_bit_reader_init (&br, &data[offset], size);
-
-  return gst_mpeg_video_parse_sequence (seqhdr, &br);
 }
 
 /**
@@ -439,6 +416,110 @@ gst_mpeg_video_parse_sequence_extension (GstMpegVideoSequenceExt * seqext,
   /* framerate extension */
   seqext->fps_n_ext = gst_bit_reader_get_bits_uint8_unchecked (&br, 2);
   seqext->fps_d_ext = gst_bit_reader_get_bits_uint8_unchecked (&br, 2);
+
+  return TRUE;
+}
+
+gboolean
+gst_mpeg_video_parse_sequence_display_extension (GstMpegVideoSequenceDisplayExt
+    * seqdisplayext, const guint8 * data, gsize size, guint offset)
+{
+  GstBitReader br;
+
+  g_return_val_if_fail (seqdisplayext != NULL, FALSE);
+  if (offset > size)
+    return FALSE;
+
+  size -= offset;
+  if (size < 5) {
+    GST_DEBUG ("not enough bytes to parse the extension");
+    return FALSE;
+  }
+
+  gst_bit_reader_init (&br, &data[offset], size);
+
+  if (gst_bit_reader_get_bits_uint8_unchecked (&br, 4) !=
+      GST_MPEG_VIDEO_PACKET_EXT_SEQUENCE_DISPLAY) {
+    GST_DEBUG ("Not parsing a sequence display extension");
+    return FALSE;
+  }
+
+  seqdisplayext->video_format =
+      gst_bit_reader_get_bits_uint8_unchecked (&br, 3);
+  seqdisplayext->colour_description_flag =
+      gst_bit_reader_get_bits_uint8_unchecked (&br, 1);
+
+  if (seqdisplayext->colour_description_flag) {
+    seqdisplayext->colour_primaries =
+        gst_bit_reader_get_bits_uint8_unchecked (&br, 8);
+    seqdisplayext->transfer_characteristics =
+        gst_bit_reader_get_bits_uint8_unchecked (&br, 8);
+    seqdisplayext->matrix_coefficients =
+        gst_bit_reader_get_bits_uint8_unchecked (&br, 8);
+  }
+
+  if (gst_bit_reader_get_remaining (&br) < 29) {
+    GST_DEBUG ("Not enough remaining bytes to parse the extension");
+    return FALSE;
+  }
+
+  seqdisplayext->display_horizontal_size =
+      gst_bit_reader_get_bits_uint16_unchecked (&br, 14);
+  /* skip marker bit */
+  gst_bit_reader_skip_unchecked (&br, 1);
+  seqdisplayext->display_vertical_size =
+      gst_bit_reader_get_bits_uint16_unchecked (&br, 14);
+
+  return TRUE;
+}
+
+gboolean
+gst_mpeg_video_finalise_mpeg2_sequence_header (GstMpegVideoSequenceHdr * seqhdr,
+    GstMpegVideoSequenceExt * seqext,
+    GstMpegVideoSequenceDisplayExt * displayext)
+{
+  guint32 w;
+  guint32 h;
+
+  if (seqext) {
+    seqhdr->fps_n = seqhdr->fps_n * (seqext->fps_n_ext + 1);
+    seqhdr->fps_d = seqhdr->fps_d * (seqext->fps_d_ext + 1);
+    /* Extend width and height to 14 bits by adding the extension bits */
+    seqhdr->width |= (seqext->horiz_size_ext << 12);
+    seqhdr->height |= (seqext->vert_size_ext << 12);
+  }
+
+  w = seqhdr->width;
+  h = seqhdr->height;
+  if (displayext) {
+    /* Use the display size for calculating PAR when display ext present */
+    w = displayext->display_horizontal_size;
+    h = displayext->display_vertical_size;
+  }
+
+  /* Pixel_width = DAR_width * display_vertical_size */
+  /* Pixel_height = DAR_height * display_horizontal_size */
+  switch (seqhdr->aspect_ratio_info) {
+    case 0x01:                 /* Square pixels */
+      seqhdr->par_w = seqhdr->par_h = 1;
+      break;
+    case 0x02:                 /* 3:4 DAR = 4:3 pixels */
+      seqhdr->par_w = 4 * h;
+      seqhdr->par_h = 3 * w;
+      break;
+    case 0x03:                 /* 9:16 DAR */
+      seqhdr->par_w = 16 * h;
+      seqhdr->par_h = 9 * w;
+      break;
+    case 0x04:                 /* 1:2.21 DAR */
+      seqhdr->par_w = 221 * h;
+      seqhdr->par_h = 100 * w;
+      break;
+    default:
+      GST_DEBUG ("unknown/invalid aspect_ratio_information %d",
+          seqhdr->aspect_ratio_info);
+      break;
+  }
 
   return TRUE;
 }
