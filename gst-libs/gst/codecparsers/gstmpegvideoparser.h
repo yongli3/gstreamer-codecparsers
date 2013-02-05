@@ -428,6 +428,12 @@ gboolean gst_mpeg_video_parse_sequence_display_extension (GstMpegVideoSequenceDi
 gboolean gst_mpeg_video_parse_quant_matrix_extension  (GstMpegVideoQuantMatrixExt * quant,
                                                        const guint8 * data, gsize size, guint offset);
 
+void     gst_mpeg_video_zigzag_to_raster_quant_matrix (guint8 out_quant[64],
+                                                       const guint8 quant[64]);
+
+void     gst_mpeg_video_raster_to_zigzag_quant_matrix (guint8 out_quant[64],
+                                                       const guint8 quant[64]);
+
 G_END_DECLS
 
 #endif
