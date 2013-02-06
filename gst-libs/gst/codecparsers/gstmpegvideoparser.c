@@ -821,7 +821,7 @@ failed:
 }
 
 /**
- * gst_mpeg_video_zigzag_to_raster_quant_matrix:
+ * gst_mpeg_video_quant_matrix_get_raster_from_zigzag:
  * @out_quant: (out): The resulting quantization matrix
  * @quant: The source quantization matrix
  *
@@ -834,7 +834,7 @@ failed:
  * Since: 1.2
  */
 void
-gst_mpeg_video_zigzag_to_raster_quant_matrix (guint8 out_quant[64],
+gst_mpeg_video_quant_matrix_get_raster_from_zigzag (guint8 out_quant[64],
     const guint8 quant[64])
 {
   guint i;
@@ -846,7 +846,7 @@ gst_mpeg_video_zigzag_to_raster_quant_matrix (guint8 out_quant[64],
 }
 
 /**
- * gst_mpeg_video_raster_to_zigzag_quant_matrix:
+ * gst_mpeg_video_quant_matrix_get_zigzag_from_raster:
  * @out_quant: (out): The resulting quantization matrix
  * @quant: The source quantization matrix
  *
@@ -859,7 +859,7 @@ gst_mpeg_video_zigzag_to_raster_quant_matrix (guint8 out_quant[64],
  * Since: 1.2
  */
 void
-gst_mpeg_video_raster_to_zigzag_quant_matrix (guint8 out_quant[64],
+gst_mpeg_video_quant_matrix_get_zigzag_from_raster (guint8 out_quant[64],
     const guint8 quant[64])
 {
   guint i;
