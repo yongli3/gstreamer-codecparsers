@@ -174,6 +174,7 @@ typedef enum
  * GstH264SEIPayloadType:
  * @GST_H264_SEI_BUF_PERIOD: Buffering Period SEI Message
  * @GST_H264_SEI_PIC_TIMING: Picture Timing SEI Message
+ * @GST_H264_SEI_STEREO_VIDEO_INFO: Stereo Video Information SEI Message (D.2.22)
  * ...
  *
  * The type of SEI message.
@@ -181,7 +182,8 @@ typedef enum
 typedef enum
 {
   GST_H264_SEI_BUF_PERIOD = 0,
-  GST_H264_SEI_PIC_TIMING = 1
+  GST_H264_SEI_PIC_TIMING = 1,
+  GST_H264_SEI_STEREO_VIDEO_INFO = 21
       /* and more...  */
 } GstH264SEIPayloadType;
 
@@ -258,6 +260,7 @@ typedef struct _GstH264SliceHdr               GstH264SliceHdr;
 typedef struct _GstH264ClockTimestamp         GstH264ClockTimestamp;
 typedef struct _GstH264PicTiming              GstH264PicTiming;
 typedef struct _GstH264BufferingPeriod        GstH264BufferingPeriod;
+typedef struct _GstH264StereoVideoInfo        GstH264StereoVideoInfo;
 typedef struct _GstH264SEIMessage             GstH264SEIMessage;
 
 /**
@@ -835,6 +838,16 @@ struct _GstH264ClockTimestamp
   guint32 time_offset;
 };
 
+struct _GstH264StereoVideoInfo
+{
+  guint8 field_views_flag;
+  guint8 top_field_is_left_view_flag;
+  guint8 current_frame_is_left_view_flag;
+  guint8 next_frame_is_second_view_flag;
+  guint8 left_view_self_contained_flag;
+  guint8 right_view_self_contained_flag;
+};
+
 struct _GstH264PicTiming
 {
   guint32 cpb_removal_delay;
@@ -868,6 +881,7 @@ struct _GstH264SEIMessage
   union {
     GstH264BufferingPeriod buffering_period;
     GstH264PicTiming pic_timing;
+    GstH264StereoVideoInfo stereo_video_info;
     /* ... could implement more */
   } payload;
 };
