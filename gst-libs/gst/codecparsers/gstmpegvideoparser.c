@@ -304,7 +304,7 @@ gst_mpeg_video_parse_sequence_header (GstMpegVideoSequenceHdr * seqhdr,
     seqhdr->bitrate = 0;
   } else {
     /* Value in header is in units of 400 bps */
-    seqhdr->bitrate *= 400;
+    seqhdr->bitrate = seqhdr->bitrate_value * 400;
   }
 
   READ_UINT8 (&br, bits, 1);
@@ -486,14 +486,20 @@ gst_mpeg_video_finalise_mpeg2_sequence_header (GstMpegVideoSequenceHdr * seqhdr,
     /* Extend width and height to 14 bits by adding the extension bits */
     seqhdr->width |= (seqext->horiz_size_ext << 12);
     seqhdr->height |= (seqext->vert_size_ext << 12);
+    seqhdr->bitrate += (seqext->bitrate_ext << 18) * 400;
   }
 
   w = seqhdr->width;
   h = seqhdr->height;
   if (displayext) {
-    /* Use the display size for calculating PAR when display ext present */
-    w = displayext->display_horizontal_size;
-    h = displayext->display_vertical_size;
+    /* Use the display size for calculating PAR when display ext present.
+     * But we are handling this like what DVD players are doing. Which means,
+     * ignore the display extension values if they are greater than the width/height
+     * values provided by seqhdr and calculate the PAR based on the seqhdr values. */
+    if (displayext->display_horizontal_size < w)
+      w = displayext->display_horizontal_size;
+    if (displayext->display_vertical_size < h)
+      h = displayext->display_vertical_size;
   }
 
   /* Pixel_width = DAR_width * display_vertical_size */
@@ -617,14 +623,14 @@ gst_mpeg_video_parse_picture_extension (GstMpegVideoPictureExt * ext,
 
   size -= offset;
 
-  if (size < 4)
+  if (size < 5)
     return FALSE;
 
   gst_bit_reader_init (&br, &data[offset], size);
 
   if (gst_bit_reader_get_bits_uint8_unchecked (&br, 4) !=
       GST_MPEG_VIDEO_PACKET_EXT_PICTURE) {
-    GST_DEBUG ("Not parsing a picture extension");
+    GST_DEBUG ("Extension is not a picture extension");
     return FALSE;
   }
 
