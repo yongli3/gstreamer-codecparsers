@@ -2,7 +2,7 @@ lib_LTLIBRARIES = libgstcodecparsers-@GST_API_VERSION@.la
 
 libgstcodecparsers_@GST_API_VERSION@_la_SOURCES = \
 	gstmpegvideoparser.c gsth264parser.c gstvc1parser.c gstmpeg4parser.c \
-	parserutils.c \
+	gsth265parser.c parserutils.c \
 	$(NULL)
 
 libgstcodecparsers_@GST_API_VERSION@includedir = \
@@ -12,6 +12,7 @@ noinst_HEADERS = parserutils.h
 
 libgstcodecparsers_@GST_API_VERSION@include_HEADERS = \
 	gstmpegvideoparser.h gsth264parser.h gstvc1parser.h gstmpeg4parser.h \
+	gsth265parser.h \
 	$(NULL)
 
 libgstcodecparsers_@GST_API_VERSION@_la_CFLAGS = \
