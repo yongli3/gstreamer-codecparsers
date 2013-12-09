@@ -124,31 +124,10 @@ static const VLCTable mpeg2_mbaddr_vlc_table[] = {
 GST_DEBUG_CATEGORY (mpegvideo_parser_debug);
 #define GST_CAT_DEFAULT mpegvideo_parser_debug
 
-static gboolean initialized = FALSE;
+#define INITIALIZE_DEBUG_CATEGORY \
+  GST_DEBUG_CATEGORY_INIT (mpegvideo_parser_debug, "codecparsers_mpegvideo", \
+      0, "Mpegvideo parser library");
 
-static inline gboolean
-find_start_code (GstBitReader * b)
-{
-  guint32 bits;
-
-  /* 0 bits until byte aligned */
-  while (b->bit != 0) {
-    GET_BITS (b, 1, &bits);
-  }
-
-  /* 0 bytes until startcode */
-  while (gst_bit_reader_peek_bits_uint32 (b, &bits, 32)) {
-    if (bits >> 8 == 0x1) {
-      return TRUE;
-    } else if (gst_bit_reader_skip (b, 8) == FALSE)
-      break;
-  }
-
-  return FALSE;
-
-failed:
-  return FALSE;
-}
 
 /* Set the Pixel Aspect Ratio in our hdr from a ASR code in the data */
 static void
@@ -200,14 +179,13 @@ set_fps_from_code (GstMpegVideoSequenceHdr * seqhdr, guint8 fps_code)
 }
 
 /* @size and @offset are wrt current reader position */
-static inline guint
+static inline gint
 scan_for_start_codes (const GstByteReader * reader, guint offset, guint size)
 {
   const guint8 *data;
   guint i = 0;
 
-  g_return_val_if_fail ((guint64) offset + size <= reader->size - reader->byte,
-      -1);
+  g_assert ((guint64) offset + size <= reader->size - reader->byte);
 
   /* we can't find the pattern with less than 4 bytes */
   if (G_UNLIKELY (size < 4))
@@ -238,14 +216,17 @@ scan_for_start_codes (const GstByteReader * reader, guint offset, guint size)
 
 /**
  * gst_mpeg_video_parse:
+ * @packet: a #GstMpegVideoPacket to fill with the data and offset of the
+ *     next packet found
  * @data: The data to parse
  * @size: The size of @data
  * @offset: The offset from which to start parsing
  *
- * Parses the MPEG 1/2 video bitstream contained in @data , and returns the
- * detect packets as a list of #GstMpegVideoTypeOffsetSize.
+ * Parses the MPEG 1/2 video bitstream contained in @data, and returns the
+ * offset, and if known also the size, in @packet. This function will scan
+ * the data to find the next packet if needed.
  *
- * Returns: TRUE if a packet start code was found
+ * Returns: TRUE if a packet start code was found, otherwise FALSE.
  */
 gboolean
 gst_mpeg_video_parse (GstMpegVideoPacket * packet,
@@ -254,11 +235,7 @@ gst_mpeg_video_parse (GstMpegVideoPacket * packet,
   gint off;
   GstByteReader br;
 
-  if (!initialized) {
-    GST_DEBUG_CATEGORY_INIT (mpegvideo_parser_debug, "codecparsers_mpegvideo",
-        0, "Mpegvideo parser library");
-    initialized = TRUE;
-  }
+  INITIALIZE_DEBUG_CATEGORY;
 
   if (size <= offset) {
     GST_DEBUG ("Can't parse from offset %d, buffer is to small", offset);
@@ -325,6 +302,8 @@ gst_mpeg_video_packet_parse_sequence_header (const GstMpegVideoPacket * packet,
 
   if (packet->size < 8)
     return FALSE;
+
+  INITIALIZE_DEBUG_CATEGORY;
 
   gst_bit_reader_init (&br, &packet->data[packet->offset], packet->size);
 
@@ -849,7 +828,7 @@ gst_mpeg_video_packet_parse_picture_header (const GstMpegVideoPacket * packet,
 
 
   if (hdr->pic_type == 0 || hdr->pic_type > 4)
-    goto failed;                /* Corrupted picture packet */
+    goto bad_pic_type;          /* Corrupted picture packet */
 
   /* skip VBV delay */
   if (!gst_bit_reader_skip (&br, 16))
@@ -879,9 +858,15 @@ gst_mpeg_video_packet_parse_picture_header (const GstMpegVideoPacket * packet,
 
   return TRUE;
 
+bad_pic_type:
+  {
+    GST_WARNING ("Unsupported picture type : %d", hdr->pic_type);
+    return FALSE;
+  }
+
 failed:
   {
-    GST_WARNING ("Failed to parse picture header");
+    GST_WARNING ("Not enough data to parse picture header");
     return FALSE;
   }
 }
