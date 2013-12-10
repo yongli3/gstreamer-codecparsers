@@ -103,6 +103,7 @@ typedef enum {
  * @GST_H264_NAL_FILLER_DATA: Filler data nal lunit
  * @GST_H264_NAL_SPS_EXT: Sequence parameter set (SPS) extension NAL unit
  * @GST_H264_NAL_PREFIX_UNIT: Prefix NAL unit
+ * @GST_H264_NAL_SUBSET_SPS: Subset sequence parameter set (SPS) NAL unit
  * @GST_H264_NAL_SLICE_AUX: Auxiliary coded picture without partitioning NAL unit
  * @GST_H264_NAL_SLICE_EXT: Coded slice extension NAL unit
  *
