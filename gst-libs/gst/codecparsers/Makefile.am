@@ -2,13 +2,14 @@ lib_LTLIBRARIES = libgstcodecparsers-@GST_API_VERSION@.la
 
 libgstcodecparsers_@GST_API_VERSION@_la_SOURCES = \
 	gstmpegvideoparser.c gsth264parser.c gstvc1parser.c gstmpeg4parser.c \
-	gsth265parser.c parserutils.c nalutils.c \
+	gsth265parser.c gstvp8parser.c \
+	parserutils.c nalutils.c \
 	$(NULL)
 
 libgstcodecparsers_@GST_API_VERSION@includedir = \
 	$(includedir)/gstreamer-@GST_API_VERSION@/gst/codecparsers
 
-noinst_HEADERS = parserutils.h nalutils.h
+noinst_HEADERS = parserutils.h nalutils.h vp8utils.h
 
 libgstcodecparsers_@GST_API_VERSION@include_HEADERS = \
 	gstmpegvideoparser.h gsth264parser.h gstvc1parser.h gstmpeg4parser.h \
