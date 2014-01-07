@@ -2,6 +2,7 @@ noinst_PROGRAMS = \
 	h264parser	\
 	mpegvideoparser	\
 	vc1parser	\
+	vp8parser	\
 	$(NULL)
 
 AM_CFLAGS = \
