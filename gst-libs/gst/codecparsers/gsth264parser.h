@@ -198,6 +198,7 @@ typedef enum
  * GstH264SEIPayloadType:
  * @GST_H264_SEI_BUF_PERIOD: Buffering Period SEI Message
  * @GST_H264_SEI_PIC_TIMING: Picture Timing SEI Message
+ * @GST_H264_SEI_RECOVERY_POINT: Recovery Point SEI Message (D.2.7)
  * @GST_H264_SEI_STEREO_VIDEO_INFO: Stereo Video Information SEI Message (D.2.22)
  * @GST_H264_SEI_FRAME_PACKING: Frame Packing Arrangement SEI Message (D.2.25)
  * ...
@@ -208,6 +209,7 @@ typedef enum
 {
   GST_H264_SEI_BUF_PERIOD = 0,
   GST_H264_SEI_PIC_TIMING = 1,
+  GST_H264_SEI_RECOVERY_POINT = 6,
   GST_H264_SEI_STEREO_VIDEO_INFO = 21,
   GST_H264_SEI_FRAME_PACKING = 45
       /* and more...  */
@@ -286,6 +288,7 @@ typedef struct _GstH264SliceHdr               GstH264SliceHdr;
 typedef struct _GstH264ClockTimestamp         GstH264ClockTimestamp;
 typedef struct _GstH264PicTiming              GstH264PicTiming;
 typedef struct _GstH264BufferingPeriod        GstH264BufferingPeriod;
+typedef struct _GstH264RecoveryPoint          GstH264RecoveryPoint;
 typedef struct _GstH264StereoVideoInfo        GstH264StereoVideoInfo;
 typedef struct _GstH264FramePacking           GstH264FramePacking;
 typedef struct _GstH264SEIMessage             GstH264SEIMessage;
@@ -921,6 +924,14 @@ struct _GstH264BufferingPeriod
   guint8 vcl_initial_cpb_removal_delay_offset[32];
 };
 
+struct _GstH264RecoveryPoint
+{
+  guint32 recovery_frame_cnt;
+  guint8 exact_match_flag;
+  guint8 broken_link_flag;
+  guint8 changing_slice_group_idc;
+};
+
 struct _GstH264SEIMessage
 {
   GstH264SEIPayloadType payloadType;
@@ -928,6 +939,7 @@ struct _GstH264SEIMessage
   union {
     GstH264BufferingPeriod buffering_period;
     GstH264PicTiming pic_timing;
+    GstH264RecoveryPoint recovery_point;
     GstH264StereoVideoInfo stereo_video_info;
     GstH264FramePacking frame_packing;
     /* ... could implement more */
