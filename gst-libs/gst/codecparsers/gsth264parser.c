@@ -84,6 +84,7 @@
 #  include "config.h"
 #endif
 
+#include "nalutils.h"
 #include "gsth264parser.h"
 
 #include <gst/base/gstbytereader.h>
@@ -170,262 +171,6 @@ static PAR aspect_ratios[17] = {
   {2, 1}
 };
 
-/* Compute Ceil(Log2(v)) */
-/* Derived from branchless code for integer log2(v) from:
-   <http://graphics.stanford.edu/~seander/bithacks.html#IntegerLog> */
-static guint
-ceil_log2 (guint32 v)
-{
-  guint r, shift;
-
-  v--;
-  r = (v > 0xFFFF) << 4;
-  v >>= r;
-  shift = (v > 0xFF) << 3;
-  v >>= shift;
-  r |= shift;
-  shift = (v > 0xF) << 2;
-  v >>= shift;
-  r |= shift;
-  shift = (v > 0x3) << 1;
-  v >>= shift;
-  r |= shift;
-  r |= (v >> 1);
-  return r + 1;
-}
-
-/****** Nal parser ******/
-
-typedef struct
-{
-  const guint8 *data;
-  guint size;
-
-  guint n_epb;                  /* Number of emulation prevention bytes */
-  guint byte;                   /* Byte position */
-  guint bits_in_cache;          /* bitpos in the cache of next bit */
-  guint8 first_byte;
-  guint64 cache;                /* cached bytes */
-} NalReader;
-
-static void
-nal_reader_init (NalReader * nr, const guint8 * data, guint size)
-{
-  nr->data = data;
-  nr->size = size;
-  nr->n_epb = 0;
-
-  nr->byte = 0;
-  nr->bits_in_cache = 0;
-  /* fill with something other than 0 to detect emulation prevention bytes */
-  nr->first_byte = 0xff;
-  nr->cache = 0xff;
-}
-
-static inline gboolean
-nal_reader_read (NalReader * nr, guint nbits)
-{
-  if (G_UNLIKELY (nr->byte * 8 + (nbits - nr->bits_in_cache) > nr->size * 8)) {
-    GST_DEBUG ("Can not read %u bits, bits in cache %u, Byte * 8 %u, size in "
-        "bits %u", nbits, nr->bits_in_cache, nr->byte * 8, nr->size * 8);
-    return FALSE;
-  }
-
-  while (nr->bits_in_cache < nbits) {
-    guint8 byte;
-    gboolean check_three_byte;
-
-    check_three_byte = TRUE;
-  next_byte:
-    if (G_UNLIKELY (nr->byte >= nr->size))
-      return FALSE;
-
-    byte = nr->data[nr->byte++];
-
-    /* check if the byte is a emulation_prevention_three_byte */
-    if (check_three_byte && byte == 0x03 && nr->first_byte == 0x00 &&
-        ((nr->cache & 0xff) == 0)) {
-      /* next byte goes unconditionally to the cache, even if it's 0x03 */
-      check_three_byte = FALSE;
-      nr->n_epb++;
-      goto next_byte;
-    }
-    nr->cache = (nr->cache << 8) | nr->first_byte;
-    nr->first_byte = byte;
-    nr->bits_in_cache += 8;
-  }
-
-  return TRUE;
-}
-
-static inline gboolean
-nal_reader_skip (NalReader * nr, guint nbits)
-{
-  if (G_UNLIKELY (!nal_reader_read (nr, nbits)))
-    return FALSE;
-
-  nr->bits_in_cache -= nbits;
-
-  return TRUE;
-}
-
-static inline guint
-nal_reader_get_pos (const NalReader * nr)
-{
-  return nr->byte * 8 - nr->bits_in_cache;
-}
-
-static inline guint
-nal_reader_get_remaining (const NalReader * nr)
-{
-  return (nr->size - nr->byte) * 8 + nr->bits_in_cache;
-}
-
-static inline guint
-nal_reader_get_epb_count (const NalReader * nr)
-{
-  return nr->n_epb;
-}
-
-#define GST_NAL_READER_READ_BITS(bits) \
-static gboolean \
-nal_reader_get_bits_uint##bits (NalReader *nr, guint##bits *val, guint nbits) \
-{ \
-  guint shift; \
-  \
-  if (!nal_reader_read (nr, nbits)) \
-    return FALSE; \
-  \
-  /* bring the required bits down and truncate */ \
-  shift = nr->bits_in_cache - nbits; \
-  *val = nr->first_byte >> shift; \
-  \
-  *val |= nr->cache << (8 - shift); \
-  /* mask out required bits */ \
-  if (nbits < bits) \
-    *val &= ((guint##bits)1 << nbits) - 1; \
-  \
-  nr->bits_in_cache = shift; \
-  \
-  return TRUE; \
-} \
-
-GST_NAL_READER_READ_BITS (8);
-GST_NAL_READER_READ_BITS (16);
-GST_NAL_READER_READ_BITS (32);
-
-static gboolean
-nal_reader_get_ue (NalReader * nr, guint32 * val)
-{
-  guint i = 0;
-  guint8 bit;
-  guint32 value;
-
-  if (G_UNLIKELY (!nal_reader_get_bits_uint8 (nr, &bit, 1))) {
-
-    return FALSE;
-  }
-
-  while (bit == 0) {
-    i++;
-    if G_UNLIKELY
-      ((!nal_reader_get_bits_uint8 (nr, &bit, 1)))
-          return FALSE;
-  }
-
-  if (G_UNLIKELY (i > 32))
-    return FALSE;
-
-  if (G_UNLIKELY (!nal_reader_get_bits_uint32 (nr, &value, i)))
-    return FALSE;
-
-  *val = (1 << i) - 1 + value;
-
-  return TRUE;
-}
-
-static inline gboolean
-nal_reader_get_se (NalReader * nr, gint32 * val)
-{
-  guint32 value;
-
-  if (G_UNLIKELY (!nal_reader_get_ue (nr, &value)))
-    return FALSE;
-
-  if (value % 2)
-    *val = (value / 2) + 1;
-  else
-    *val = -(value / 2);
-
-  return TRUE;
-}
-
-#define CHECK_ALLOWED(val, min, max) { \
-  if (val < min || val > max) { \
-    GST_WARNING ("value not in allowed range. value: %d, range %d-%d", \
-                     val, min, max); \
-    goto error; \
-  } \
-}
-
-#define READ_UINT8(nr, val, nbits) { \
-  if (!nal_reader_get_bits_uint8 (nr, &val, nbits)) { \
-    GST_WARNING ("failed to read uint8, nbits: %d", nbits); \
-    goto error; \
-  } \
-}
-
-#define READ_UINT16(nr, val, nbits) { \
-  if (!nal_reader_get_bits_uint16 (nr, &val, nbits)) { \
-  GST_WARNING ("failed to read uint16, nbits: %d", nbits); \
-    goto error; \
-  } \
-}
-
-#define READ_UINT32(nr, val, nbits) { \
-  if (!nal_reader_get_bits_uint32 (nr, &val, nbits)) { \
-  GST_WARNING ("failed to read uint32, nbits: %d", nbits); \
-    goto error; \
-  } \
-}
-
-#define READ_UINT64(nr, val, nbits) { \
-  if (!nal_reader_get_bits_uint64 (nr, &val, nbits)) { \
-    GST_WARNING ("failed to read uint32, nbits: %d", nbits); \
-    goto error; \
-  } \
-}
-
-#define READ_UE(nr, val) { \
-  if (!nal_reader_get_ue (nr, &val)) { \
-    GST_WARNING ("failed to read UE"); \
-    goto error; \
-  } \
-}
-
-#define READ_UE_ALLOWED(nr, val, min, max) { \
-  guint32 tmp; \
-  READ_UE (nr, tmp); \
-  CHECK_ALLOWED (tmp, min, max); \
-  val = tmp; \
-}
-
-#define READ_SE(nr, val) { \
-  if (!nal_reader_get_se (nr, &val)) { \
-    GST_WARNING ("failed to read SE"); \
-    goto error; \
-  } \
-}
-
-#define READ_SE_ALLOWED(nr, val, min, max) { \
-  gint32 tmp; \
-  READ_SE (nr, tmp); \
-  CHECK_ALLOWED (tmp, min, max); \
-  val = tmp; \
-}
-
-/***********  end of nal parser ***************/
-
 /*****  Utils ****/
 #define EXTENDED_SAR 255
 
@@ -465,48 +210,6 @@ set_nalu_datas (GstH264NalUnit * nalu)
   nalu->idr_pic_flag = (nalu->type == 5 ? 1 : 0);
 
   GST_DEBUG ("Nal type %u, ref_idc %u", nalu->type, nalu->ref_idc);
-}
-
-static inline gint
-scan_for_start_codes (const guint8 * data, guint size)
-{
-  GstByteReader br;
-  gst_byte_reader_init (&br, data, size);
-
-  /* NALU not empty, so we can at least expect 1 (even 2) bytes following sc */
-  return gst_byte_reader_masked_scan_uint32 (&br, 0xffffff00, 0x00000100,
-      0, size);
-}
-
-static gboolean
-gst_h264_parser_more_data (NalReader * nr)
-{
-  NalReader nr_tmp;
-  guint remaining, nbits;
-  guint8 rbsp_stop_one_bit, zero_bits;
-
-  remaining = nal_reader_get_remaining (nr);
-  if (remaining == 0)
-    return FALSE;
-
-  nr_tmp = *nr;
-  nr = &nr_tmp;
-
-  if (!nal_reader_get_bits_uint8 (nr, &rbsp_stop_one_bit, 1))
-    return FALSE;
-  if (!rbsp_stop_one_bit)
-    return TRUE;
-
-  nbits = --remaining % 8;
-  while (remaining > 0) {
-    if (!nal_reader_get_bits_uint8 (nr, &zero_bits, nbits))
-      return FALSE;
-    if (zero_bits != 0)
-      return TRUE;
-    remaining -= nbits;
-    nbits = 8;
-  }
-  return FALSE;
 }
 
 /****** Parsing functions *****/
@@ -1132,6 +835,80 @@ error:
   return GST_H264_PARSER_ERROR;
 }
 
+static GstH264ParserResult
+gst_h264_parser_parse_sei_message (GstH264NalParser * nalparser,
+    NalReader * nr, GstH264SEIMessage * sei)
+{
+  guint32 payloadSize;
+  guint8 payload_type_byte, payload_size_byte;
+#ifndef GST_DISABLE_GST_DEBUG
+  guint remaining, payload_size;
+#endif
+  GstH264ParserResult res;
+
+  GST_DEBUG ("parsing \"Sei message\"");
+
+  sei->payloadType = 0;
+  do {
+    READ_UINT8 (nr, payload_type_byte, 8);
+    sei->payloadType += payload_type_byte;
+  } while (payload_type_byte == 0xff);
+
+  payloadSize = 0;
+  do {
+    READ_UINT8 (nr, payload_size_byte, 8);
+    payloadSize += payload_size_byte;
+  }
+  while (payload_size_byte == 0xff);
+
+#ifndef GST_DISABLE_GST_DEBUG
+  remaining = nal_reader_get_remaining (nr);
+  payload_size = payloadSize * 8 < remaining ? payloadSize * 8 : remaining;
+
+  GST_DEBUG ("SEI message received: payloadType  %u, payloadSize = %u bits",
+      sei->payloadType, payload_size);
+#endif
+
+  if (sei->payloadType == GST_H264_SEI_BUF_PERIOD) {
+    /* size not set; might depend on emulation_prevention_three_byte */
+    res = gst_h264_parser_parse_buffering_period (nalparser,
+        &sei->payload.buffering_period, nr);
+  } else if (sei->payloadType == GST_H264_SEI_PIC_TIMING) {
+    /* size not set; might depend on emulation_prevention_three_byte */
+    res = gst_h264_parser_parse_pic_timing (nalparser,
+        &sei->payload.pic_timing, nr);
+  } else {
+    /* Just consume payloadSize */
+    guint32 i;
+    for (i = 0; i < payloadSize; i++)
+      nal_reader_skip_to_next_byte (nr);
+    res = GST_H264_PARSER_OK;
+  }
+
+  /* When SEI message doesn't end at byte boundary,
+   * check remaining bits fit the specification.
+   */
+  if (!nal_reader_is_byte_aligned (nr)) {
+    guint8 bit_equal_to_one;
+    READ_UINT8 (nr, bit_equal_to_one, 1);
+    if (!bit_equal_to_one)
+      GST_WARNING ("Bit non equal to one.");
+
+    while (!nal_reader_is_byte_aligned (nr)) {
+      guint8 bit_equal_to_zero;
+      READ_UINT8 (nr, bit_equal_to_zero, 1);
+      if (bit_equal_to_zero)
+        GST_WARNING ("Bit non equal to zero.");
+    }
+  }
+
+  return res;
+
+error:
+  GST_WARNING ("error parsing \"Sei message\"");
+  return GST_H264_PARSER_ERROR;
+}
+
 /******** API *************/
 
 /**
@@ -1213,14 +990,17 @@ gst_h264_parser_identify_nalu_unchecked (GstH264NalParser * nalparser,
   nalu->valid = TRUE;
   nalu->sc_offset = offset + off1;
 
-  /* sc might have 2 or 3 0-bytes */
-  if (nalu->sc_offset > 0 && data[nalu->sc_offset - 1] == 00)
-    nalu->sc_offset--;
 
   nalu->offset = offset + off1 + 3;
   nalu->data = (guint8 *) data;
 
   set_nalu_datas (nalu);
+
+  /* sc might have 2 or 3 0-bytes */
+  if (nalu->sc_offset > 0 && data[nalu->sc_offset - 1] == 00
+      && (nalu->type == GST_H264_NAL_SPS || nalu->type == GST_H264_NAL_PPS
+          || nalu->type == GST_H264_NAL_AU_DELIMITER))
+    nalu->sc_offset--;
 
   if (nalu->type == GST_H264_NAL_SEQ_END ||
       nalu->type == GST_H264_NAL_STREAM_END) {
@@ -1267,7 +1047,10 @@ gst_h264_parser_identify_nalu (GstH264NalParser * nalparser,
     return GST_H264_PARSER_NO_NAL_END;
   }
 
-  if (off2 > 0 && data[nalu->offset + off2 - 1] == 00)
+  /* Mini performance improvement:
+   * We could have a way to store how many 0s were skipped to avoid
+   * parsing them again on the next NAL */
+  while (off2 > 0 && data[nalu->offset + off2 - 1] == 00)
     off2--;
 
   nalu->size = off2;
@@ -1675,7 +1458,7 @@ gst_h264_parse_pps (GstH264NalParser * nalparser, GstH264NalUnit * nalu,
   READ_UINT8 (&nr, pps->constrained_intra_pred_flag, 1);
   READ_UINT8 (&nr, pps->redundant_pic_cnt_present_flag, 1);
 
-  if (!gst_h264_parser_more_data (&nr))
+  if (!nal_reader_has_more_data (&nr))
     goto done;
 
   READ_UINT8 (&nr, pps->transform_8x8_mode_flag, 1);
@@ -1923,69 +1706,33 @@ error:
  * gst_h264_parser_parse_sei:
  * @nalparser: a #GstH264NalParser
  * @nalu: The #GST_H264_NAL_SEI #GstH264NalUnit to parse
- * @sei: The #GstH264SEIMessage to fill.
+ * @messages: The GArray of #GstH264SEIMessage to fill. The caller must free it when done.
  *
- * Parses @data, and fills the @sei structures.
+ * Parses @data, create and fills the @messages array.
  *
  * Returns: a #GstH264ParserResult
  */
 GstH264ParserResult
 gst_h264_parser_parse_sei (GstH264NalParser * nalparser, GstH264NalUnit * nalu,
-    GstH264SEIMessage * sei)
+    GArray ** messages)
 {
   NalReader nr;
-
-  guint32 payloadSize;
-  guint8 payload_type_byte, payload_size_byte;
-#ifndef GST_DISABLE_GST_DEBUG
-  guint remaining, payload_size;
-#endif
+  GstH264SEIMessage sei;
   GstH264ParserResult res;
 
-  GST_DEBUG ("parsing \"Sei message\"");
-
+  GST_DEBUG ("parsing SEI nal");
   nal_reader_init (&nr, nalu->data + nalu->offset + 1, nalu->size - 1);
+  *messages = g_array_new (FALSE, FALSE, sizeof (GstH264SEIMessage));
 
-  /* init */
-  memset (sei, 0, sizeof (*sei));
-
-  sei->payloadType = 0;
   do {
-    READ_UINT8 (&nr, payload_type_byte, 8);
-    sei->payloadType += payload_type_byte;
-  } while (payload_type_byte == 0xff);
-
-  payloadSize = 0;
-  do {
-    READ_UINT8 (&nr, payload_size_byte, 8);
-    payloadSize += payload_size_byte;
-  }
-  while (payload_size_byte == 0xff);
-
-#ifndef GST_DISABLE_GST_DEBUG
-  remaining = nal_reader_get_remaining (&nr) * 8;
-  payload_size = payloadSize < remaining ? payloadSize : remaining;
-
-  GST_DEBUG ("SEI message received: payloadType  %u, payloadSize = %u bytes",
-      sei->payloadType, payload_size);
-#endif
-
-  if (sei->payloadType == GST_H264_SEI_BUF_PERIOD) {
-    /* size not set; might depend on emulation_prevention_three_byte */
-    res = gst_h264_parser_parse_buffering_period (nalparser,
-        &sei->payload.buffering_period, &nr);
-  } else if (sei->payloadType == GST_H264_SEI_PIC_TIMING) {
-    /* size not set; might depend on emulation_prevention_three_byte */
-    res = gst_h264_parser_parse_pic_timing (nalparser,
-        &sei->payload.pic_timing, &nr);
-  } else
-    res = GST_H264_PARSER_OK;
+    res = gst_h264_parser_parse_sei_message (nalparser, &nr, &sei);
+    if (res == GST_H264_PARSER_OK)
+      g_array_append_val (*messages, sei);
+    else
+      break;
+  } while (nal_reader_has_more_data (&nr));
 
   return res;
-
-error:
-  GST_WARNING ("error parsing \"Sei message\"");
-  return GST_H264_PARSER_ERROR;
 }
 
 /**
