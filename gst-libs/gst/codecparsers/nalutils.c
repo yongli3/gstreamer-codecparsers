@@ -124,21 +124,6 @@ nal_reader_skip (NalReader * nr, guint nbits)
   return TRUE;
 }
 
-inline gboolean
-nal_reader_skip_to_next_byte (NalReader * nr)
-{
-  if (nr->bits_in_cache == 0) {
-    if (G_LIKELY ((nr->size - nr->byte) > 0))
-      nr->byte++;
-    else
-      return FALSE;
-  }
-
-  nr->bits_in_cache = 0;
-
-  return TRUE;
-}
-
 inline guint
 nal_reader_get_pos (const NalReader * nr)
 {
@@ -264,6 +249,16 @@ nal_reader_has_more_data (NalReader * nr)
   nr_tmp = *nr;
   nr = &nr_tmp;
 
+  /* The spec defines that more_rbsp_data() searches for the last bit
+     equal to 1, and that it is the rbsp_stop_one_bit. Subsequent bits
+     until byte boundary is reached shall be zero.
+
+     This means that more_rbsp_data() is FALSE if the next bit is 1
+     and the remaining bits until byte boundary are zero. One way to
+     be sure that this bit was the very last one, is that every other
+     bit after we reached byte boundary are also set to zero.
+     Otherwise, if the next bit is 0 or if there are non-zero bits
+     afterwards, then then we have more_rbsp_data() */
   if (!nal_reader_get_bits_uint8 (nr, &rbsp_stop_one_bit, 1))
     return FALSE;
   if (!rbsp_stop_one_bit)

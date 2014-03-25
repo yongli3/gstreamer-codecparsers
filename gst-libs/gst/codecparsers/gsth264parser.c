@@ -200,16 +200,20 @@ gst_h264_parser_get_pps (GstH264NalParser * nalparser, guint8 pps_id)
   return NULL;
 }
 
-static inline void
-set_nalu_datas (GstH264NalUnit * nalu)
+static gboolean
+gst_h264_parse_nalu_header (GstH264NalUnit * nalu)
 {
   guint8 *data = nalu->data + nalu->offset;
+
+  if (nalu->size < 1)
+    return FALSE;
 
   nalu->type = (data[0] & 0x1f);
   nalu->ref_idc = (data[0] & 0x60) >> 5;
   nalu->idr_pic_flag = (nalu->type == 5 ? 1 : 0);
 
   GST_DEBUG ("Nal type %u, ref_idc %u", nalu->type, nalu->ref_idc);
+  return TRUE;
 }
 
 /****** Parsing functions *****/
@@ -687,25 +691,29 @@ gst_h264_parser_parse_buffering_period (GstH264NalParser * nalparser,
 
     if (vui->nal_hrd_parameters_present_flag) {
       GstH264HRDParams *hrd = &vui->nal_hrd_parameters;
+      const guint8 nbits = hrd->initial_cpb_removal_delay_length_minus1 + 1;
       guint8 sched_sel_idx;
 
       for (sched_sel_idx = 0; sched_sel_idx <= hrd->cpb_cnt_minus1;
           sched_sel_idx++) {
-        READ_UINT8 (nr, per->nal_initial_cpb_removal_delay[sched_sel_idx], 5);
+        READ_UINT8 (nr, per->nal_initial_cpb_removal_delay[sched_sel_idx],
+            nbits);
         READ_UINT8 (nr,
-            per->nal_initial_cpb_removal_delay_offset[sched_sel_idx], 5);
+            per->nal_initial_cpb_removal_delay_offset[sched_sel_idx], nbits);
       }
     }
 
     if (vui->vcl_hrd_parameters_present_flag) {
       GstH264HRDParams *hrd = &vui->vcl_hrd_parameters;
+      const guint8 nbits = hrd->initial_cpb_removal_delay_length_minus1 + 1;
       guint8 sched_sel_idx;
 
       for (sched_sel_idx = 0; sched_sel_idx <= hrd->cpb_cnt_minus1;
           sched_sel_idx++) {
-        READ_UINT8 (nr, per->vcl_initial_cpb_removal_delay[sched_sel_idx], 5);
+        READ_UINT8 (nr, per->vcl_initial_cpb_removal_delay[sched_sel_idx],
+            nbits);
         READ_UINT8 (nr,
-            per->vcl_initial_cpb_removal_delay_offset[sched_sel_idx], 5);
+            per->vcl_initial_cpb_removal_delay_offset[sched_sel_idx], nbits);
       }
     }
   }
@@ -841,9 +849,7 @@ gst_h264_parser_parse_sei_message (GstH264NalParser * nalparser,
 {
   guint32 payloadSize;
   guint8 payload_type_byte, payload_size_byte;
-#ifndef GST_DISABLE_GST_DEBUG
   guint remaining, payload_size;
-#endif
   GstH264ParserResult res;
 
   GST_DEBUG ("parsing \"Sei message\"");
@@ -861,28 +867,35 @@ gst_h264_parser_parse_sei_message (GstH264NalParser * nalparser,
   }
   while (payload_size_byte == 0xff);
 
-#ifndef GST_DISABLE_GST_DEBUG
   remaining = nal_reader_get_remaining (nr);
   payload_size = payloadSize * 8 < remaining ? payloadSize * 8 : remaining;
 
   GST_DEBUG ("SEI message received: payloadType  %u, payloadSize = %u bits",
       sei->payloadType, payload_size);
-#endif
 
-  if (sei->payloadType == GST_H264_SEI_BUF_PERIOD) {
-    /* size not set; might depend on emulation_prevention_three_byte */
-    res = gst_h264_parser_parse_buffering_period (nalparser,
-        &sei->payload.buffering_period, nr);
-  } else if (sei->payloadType == GST_H264_SEI_PIC_TIMING) {
-    /* size not set; might depend on emulation_prevention_three_byte */
-    res = gst_h264_parser_parse_pic_timing (nalparser,
-        &sei->payload.pic_timing, nr);
-  } else {
-    /* Just consume payloadSize */
-    guint32 i;
-    for (i = 0; i < payloadSize; i++)
-      nal_reader_skip_to_next_byte (nr);
-    res = GST_H264_PARSER_OK;
+  switch (sei->payloadType) {
+    case GST_H264_SEI_BUF_PERIOD:
+      /* size not set; might depend on emulation_prevention_three_byte */
+      res = gst_h264_parser_parse_buffering_period (nalparser,
+          &sei->payload.buffering_period, nr);
+      break;
+    case GST_H264_SEI_PIC_TIMING:
+      /* size not set; might depend on emulation_prevention_three_byte */
+      res = gst_h264_parser_parse_pic_timing (nalparser,
+          &sei->payload.pic_timing, nr);
+      break;
+    default:{
+      /* Just consume payloadSize bytes, which does not account for
+         emulation prevention bytes */
+      guint nbits = payload_size % 8;
+      while (payload_size > 0) {
+        nal_reader_skip (nr, nbits);
+        payload_size -= nbits;
+        nbits = 8;
+      }
+      res = GST_H264_PARSER_OK;
+      break;
+    }
   }
 
   /* When SEI message doesn't end at byte boundary,
@@ -987,14 +1000,20 @@ gst_h264_parser_identify_nalu_unchecked (GstH264NalParser * nalparser,
     return GST_H264_PARSER_ERROR;
   }
 
-  nalu->valid = TRUE;
   nalu->sc_offset = offset + off1;
 
 
   nalu->offset = offset + off1 + 3;
   nalu->data = (guint8 *) data;
+  nalu->size = size - nalu->offset;
 
-  set_nalu_datas (nalu);
+  if (!gst_h264_parse_nalu_header (nalu)) {
+    GST_WARNING ("error parsing \"NAL unit header\"");
+    nalu->size = 0;
+    return GST_H264_PARSER_BROKEN_DATA;
+  }
+
+  nalu->valid = TRUE;
 
   /* sc might have 2 or 3 0-bytes */
   if (nalu->sc_offset > 0 && data[nalu->sc_offset - 1] == 00
@@ -1008,8 +1027,6 @@ gst_h264_parser_identify_nalu_unchecked (GstH264NalParser * nalparser,
     nalu->size = 0;
     return GST_H264_PARSER_OK;
   }
-
-  nalu->size = size - nalu->offset;
 
   return GST_H264_PARSER_OK;
 }
@@ -1106,10 +1123,11 @@ gst_h264_parser_identify_nalu_avc (GstH264NalParser * nalparser,
 
   nalu->data = (guint8 *) data;
 
-  set_nalu_datas (nalu);
-
-  if (nalu->size < 2)
+  if (!gst_h264_parse_nalu_header (nalu)) {
+    GST_WARNING ("error parsing \"NAL unit header\"");
+    nalu->size = 0;
     return GST_H264_PARSER_BROKEN_DATA;
+  }
 
   nalu->valid = TRUE;
 
@@ -1173,29 +1191,15 @@ gst_h264_parser_parse_sps (GstH264NalParser * nalparser, GstH264NalUnit * nalu,
   return res;
 }
 
-/**
- * gst_h264_parse_sps:
- * @nalu: The #GST_H264_NAL_SPS #GstH264NalUnit to parse
- * @sps: The #GstH264SPS to fill.
- * @parse_vui_params: Whether to parse the vui_params or not
- *
- * Parses @data, and fills the @sps structure.
- *
- * Returns: a #GstH264ParserResult
- */
-GstH264ParserResult
-gst_h264_parse_sps (GstH264NalUnit * nalu, GstH264SPS * sps,
+/* Parse seq_parameter_set_data() */
+static gboolean
+gst_h264_parse_sps_data (NalReader * nr, GstH264SPS * sps,
     gboolean parse_vui_params)
 {
-  NalReader nr;
   gint width, height;
   guint subwc[] = { 1, 2, 2, 1 };
   guint subhc[] = { 1, 2, 1, 1 };
   GstH264VUIParams *vui = NULL;
-
-  INITIALIZE_DEBUG_CATEGORY;
-  GST_DEBUG ("parsing SPS");
-  nal_reader_init (&nr, nalu->data + nalu->offset + 1, nalu->size - 1);
 
   /* set default values for fields that might not be present in the bitstream
      and have valid defaults */
@@ -1213,38 +1217,38 @@ gst_h264_parse_sps (GstH264NalUnit * nalu, GstH264SPS * sps,
   sps->frame_crop_bottom_offset = 0;
   sps->delta_pic_order_always_zero_flag = 0;
 
-  READ_UINT8 (&nr, sps->profile_idc, 8);
-  READ_UINT8 (&nr, sps->constraint_set0_flag, 1);
-  READ_UINT8 (&nr, sps->constraint_set1_flag, 1);
-  READ_UINT8 (&nr, sps->constraint_set2_flag, 1);
-  READ_UINT8 (&nr, sps->constraint_set3_flag, 1);
+  READ_UINT8 (nr, sps->profile_idc, 8);
+  READ_UINT8 (nr, sps->constraint_set0_flag, 1);
+  READ_UINT8 (nr, sps->constraint_set1_flag, 1);
+  READ_UINT8 (nr, sps->constraint_set2_flag, 1);
+  READ_UINT8 (nr, sps->constraint_set3_flag, 1);
 
   /* skip reserved_zero_4bits */
-  if (!nal_reader_skip (&nr, 4))
+  if (!nal_reader_skip (nr, 4))
     goto error;
 
-  READ_UINT8 (&nr, sps->level_idc, 8);
+  READ_UINT8 (nr, sps->level_idc, 8);
 
-  READ_UE_ALLOWED (&nr, sps->id, 0, GST_H264_MAX_SPS_COUNT - 1);
+  READ_UE_ALLOWED (nr, sps->id, 0, GST_H264_MAX_SPS_COUNT - 1);
 
   if (sps->profile_idc == 100 || sps->profile_idc == 110 ||
       sps->profile_idc == 122 || sps->profile_idc == 244 ||
       sps->profile_idc == 44 || sps->profile_idc == 83 ||
       sps->profile_idc == 86) {
-    READ_UE_ALLOWED (&nr, sps->chroma_format_idc, 0, 3);
+    READ_UE_ALLOWED (nr, sps->chroma_format_idc, 0, 3);
     if (sps->chroma_format_idc == 3)
-      READ_UINT8 (&nr, sps->separate_colour_plane_flag, 1);
+      READ_UINT8 (nr, sps->separate_colour_plane_flag, 1);
 
-    READ_UE_ALLOWED (&nr, sps->bit_depth_luma_minus8, 0, 6);
-    READ_UE_ALLOWED (&nr, sps->bit_depth_chroma_minus8, 0, 6);
-    READ_UINT8 (&nr, sps->qpprime_y_zero_transform_bypass_flag, 1);
+    READ_UE_ALLOWED (nr, sps->bit_depth_luma_minus8, 0, 6);
+    READ_UE_ALLOWED (nr, sps->bit_depth_chroma_minus8, 0, 6);
+    READ_UINT8 (nr, sps->qpprime_y_zero_transform_bypass_flag, 1);
 
-    READ_UINT8 (&nr, sps->scaling_matrix_present_flag, 1);
+    READ_UINT8 (nr, sps->scaling_matrix_present_flag, 1);
     if (sps->scaling_matrix_present_flag) {
       guint8 n_lists;
 
       n_lists = (sps->chroma_format_idc != 3) ? 8 : 12;
-      if (!gst_h264_parser_parse_scaling_list (&nr,
+      if (!gst_h264_parser_parse_scaling_list (nr,
               sps->scaling_lists_4x4, sps->scaling_lists_8x8,
               default_4x4_inter, default_4x4_intra,
               default_8x8_inter, default_8x8_intra, n_lists))
@@ -1252,46 +1256,46 @@ gst_h264_parse_sps (GstH264NalUnit * nalu, GstH264SPS * sps,
     }
   }
 
-  READ_UE_ALLOWED (&nr, sps->log2_max_frame_num_minus4, 0, 12);
+  READ_UE_ALLOWED (nr, sps->log2_max_frame_num_minus4, 0, 12);
 
   sps->max_frame_num = 1 << (sps->log2_max_frame_num_minus4 + 4);
 
-  READ_UE_ALLOWED (&nr, sps->pic_order_cnt_type, 0, 2);
+  READ_UE_ALLOWED (nr, sps->pic_order_cnt_type, 0, 2);
   if (sps->pic_order_cnt_type == 0) {
-    READ_UE_ALLOWED (&nr, sps->log2_max_pic_order_cnt_lsb_minus4, 0, 12);
+    READ_UE_ALLOWED (nr, sps->log2_max_pic_order_cnt_lsb_minus4, 0, 12);
   } else if (sps->pic_order_cnt_type == 1) {
     guint i;
 
-    READ_UINT8 (&nr, sps->delta_pic_order_always_zero_flag, 1);
-    READ_SE (&nr, sps->offset_for_non_ref_pic);
-    READ_SE (&nr, sps->offset_for_top_to_bottom_field);
-    READ_UE_ALLOWED (&nr, sps->num_ref_frames_in_pic_order_cnt_cycle, 0, 255);
+    READ_UINT8 (nr, sps->delta_pic_order_always_zero_flag, 1);
+    READ_SE (nr, sps->offset_for_non_ref_pic);
+    READ_SE (nr, sps->offset_for_top_to_bottom_field);
+    READ_UE_ALLOWED (nr, sps->num_ref_frames_in_pic_order_cnt_cycle, 0, 255);
 
     for (i = 0; i < sps->num_ref_frames_in_pic_order_cnt_cycle; i++)
-      READ_SE (&nr, sps->offset_for_ref_frame[i]);
+      READ_SE (nr, sps->offset_for_ref_frame[i]);
   }
 
-  READ_UE (&nr, sps->num_ref_frames);
-  READ_UINT8 (&nr, sps->gaps_in_frame_num_value_allowed_flag, 1);
-  READ_UE (&nr, sps->pic_width_in_mbs_minus1);
-  READ_UE (&nr, sps->pic_height_in_map_units_minus1);
-  READ_UINT8 (&nr, sps->frame_mbs_only_flag, 1);
+  READ_UE (nr, sps->num_ref_frames);
+  READ_UINT8 (nr, sps->gaps_in_frame_num_value_allowed_flag, 1);
+  READ_UE (nr, sps->pic_width_in_mbs_minus1);
+  READ_UE (nr, sps->pic_height_in_map_units_minus1);
+  READ_UINT8 (nr, sps->frame_mbs_only_flag, 1);
 
   if (!sps->frame_mbs_only_flag)
-    READ_UINT8 (&nr, sps->mb_adaptive_frame_field_flag, 1);
+    READ_UINT8 (nr, sps->mb_adaptive_frame_field_flag, 1);
 
-  READ_UINT8 (&nr, sps->direct_8x8_inference_flag, 1);
-  READ_UINT8 (&nr, sps->frame_cropping_flag, 1);
+  READ_UINT8 (nr, sps->direct_8x8_inference_flag, 1);
+  READ_UINT8 (nr, sps->frame_cropping_flag, 1);
   if (sps->frame_cropping_flag) {
-    READ_UE (&nr, sps->frame_crop_left_offset);
-    READ_UE (&nr, sps->frame_crop_right_offset);
-    READ_UE (&nr, sps->frame_crop_top_offset);
-    READ_UE (&nr, sps->frame_crop_bottom_offset);
+    READ_UE (nr, sps->frame_crop_left_offset);
+    READ_UE (nr, sps->frame_crop_right_offset);
+    READ_UE (nr, sps->frame_crop_top_offset);
+    READ_UE (nr, sps->frame_crop_bottom_offset);
   }
 
-  READ_UINT8 (&nr, sps->vui_parameters_present_flag, 1);
+  READ_UINT8 (nr, sps->vui_parameters_present_flag, 1);
   if (sps->vui_parameters_present_flag && parse_vui_params) {
-    if (!gst_h264_parse_vui_parameters (sps, &nr))
+    if (!gst_h264_parse_vui_parameters (sps, nr))
       goto error;
     vui = &sps->vui_parameters;
   }
@@ -1355,6 +1359,35 @@ gst_h264_parse_sps (GstH264NalUnit * nalu, GstH264SPS * sps,
   } else {
     GST_LOG ("No VUI, unknown framerate");
   }
+  return TRUE;
+
+error:
+  return FALSE;
+}
+
+/**
+ * gst_h264_parse_sps:
+ * @nalu: The #GST_H264_NAL_SPS #GstH264NalUnit to parse
+ * @sps: The #GstH264SPS to fill.
+ * @parse_vui_params: Whether to parse the vui_params or not
+ *
+ * Parses @data, and fills the @sps structure.
+ *
+ * Returns: a #GstH264ParserResult
+ */
+GstH264ParserResult
+gst_h264_parse_sps (GstH264NalUnit * nalu, GstH264SPS * sps,
+    gboolean parse_vui_params)
+{
+  NalReader nr;
+
+  INITIALIZE_DEBUG_CATEGORY;
+  GST_DEBUG ("parsing SPS");
+
+  nal_reader_init (&nr, nalu->data + nalu->offset + 1, nalu->size - 1);
+
+  if (!gst_h264_parse_sps_data (&nr, sps, parse_vui_params))
+    goto error;
 
   sps->valid = TRUE;
 
@@ -1607,7 +1640,7 @@ gst_h264_parser_parse_slice_hdr (GstH264NalParser * nalparser,
   else
     slice->max_pic_num = 2 * sps->max_frame_num;
 
-  if (nalu->type == 5)
+  if (nalu->idr_pic_flag)
     READ_UE_ALLOWED (&nr, slice->idr_pic_id, 0, G_MAXUINT16);
 
   if (sps->pic_order_cnt_type == 0) {
