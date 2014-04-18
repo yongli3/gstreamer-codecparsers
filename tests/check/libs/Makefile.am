@@ -2,6 +2,7 @@ noinst_PROGRAMS = \
 	h264parser	\
 	mpegvideoparser	\
 	vc1parser	\
+	vp8parser	\
 	$(NULL)
 
 AM_CFLAGS = \
@@ -14,11 +15,12 @@ AM_CFLAGS = \
 	$(NULL)
 
 LDADD = \
+	$(top_builddir)/gst-libs/gst/codecparsers/libgstcodecparsers-$(GST_MAJORMINOR).la \
 	$(GST_PLUGINS_BASE_LIBS)	\
 	$(GST_CHECK_LIBS)		\
 	$(GST_BASE_LIBS)		\
 	$(GST_LIBS)			\
-	$(top_builddir)/gst-libs/gst/codecparsers/libgstcodecparsers-$(GST_MAJORMINOR).la
+	$(NULL)
 
 # Extra clean files so that maintainer-clean removes *everything*
 MAINTAINERCLEANFILES = Makefile.in
