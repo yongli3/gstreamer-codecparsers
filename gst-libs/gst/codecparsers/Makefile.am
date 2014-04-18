@@ -17,6 +17,7 @@ libgstcodecparsers_@GST_API_VERSION@include_HEADERS = \
 	$(NULL)
 
 libgstcodecparsers_@GST_API_VERSION@_la_CFLAGS = \
+	-I$(top_builddir)/gst-libs \
 	$(GST_PLUGINS_BAD_CFLAGS) \
 	-DGST_USE_UNSTABLE_API \
 	$(GST_CFLAGS) \
