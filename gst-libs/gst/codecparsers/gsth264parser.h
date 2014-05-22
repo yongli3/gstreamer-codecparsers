@@ -50,6 +50,8 @@ G_BEGIN_DECLS
 #define GST_H264_IS_SP_SLICE(slice) (((slice)->type % 5) == GST_H264_SP_SLICE)
 #define GST_H264_IS_SI_SLICE(slice) (((slice)->type % 5) == GST_H264_SI_SLICE)
 
+#define GST_H264_IS_SVC_NALU(nalu) \
+  ((nalu)->extension_type == GST_H264_NAL_EXTENSION_SVC)
 #define GST_H264_IS_MVC_NALU(nalu) \
   ((nalu)->extension_type == GST_H264_NAL_EXTENSION_MVC)
 
@@ -139,6 +141,7 @@ typedef enum
 /**
  * GstH264NalUnitExtensionType:
  * @GST_H264_NAL_EXTENSION_NONE: No NAL unit header extension is available
+ * @GST_H264_NAL_EXTENSION_SVC: NAL unit header extension for SVC (Annex G)
  * @GST_H264_NAL_EXTENSION_MVC: NAL unit header extension for MVC (Annex H)
  *
  * Indicates the type of H.264 NAL unit extension.
@@ -146,6 +149,7 @@ typedef enum
 typedef enum
 {
   GST_H264_NAL_EXTENSION_NONE = 0,
+  GST_H264_NAL_EXTENSION_SVC,
   GST_H264_NAL_EXTENSION_MVC,
 } GstH264NalUnitExtensionType;
 
