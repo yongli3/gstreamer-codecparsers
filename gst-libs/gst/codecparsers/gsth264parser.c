@@ -2285,7 +2285,7 @@ gst_h264_sps_clear (GstH264SPS * sps)
 }
 
 /**
- * gst_h264_video_quant_matrix_8x8_get_zigzag_from_raster:
+ * gst_h264_quant_matrix_8x8_get_zigzag_from_raster:
  * @out_quant: (out): The resulting quantization matrix
  * @quant: The source quantization matrix
  *
@@ -2298,7 +2298,7 @@ gst_h264_sps_clear (GstH264SPS * sps)
  * Since: 1.4
  */
 void
-gst_h264_video_quant_matrix_8x8_get_zigzag_from_raster (guint8 out_quant[64],
+gst_h264_quant_matrix_8x8_get_zigzag_from_raster (guint8 out_quant[64],
     const guint8 quant[64])
 {
   guint i;
@@ -2323,7 +2323,7 @@ gst_h264_video_quant_matrix_8x8_get_zigzag_from_raster (guint8 out_quant[64],
  * Since: 1.4
  */
 void
-gst_h264_video_quant_matrix_8x8_get_raster_from_zigzag (guint8 out_quant[64],
+gst_h264_quant_matrix_8x8_get_raster_from_zigzag (guint8 out_quant[64],
     const guint8 quant[64])
 {
   guint i;
@@ -2335,7 +2335,7 @@ gst_h264_video_quant_matrix_8x8_get_raster_from_zigzag (guint8 out_quant[64],
 }
 
 /**
- * gst_h264_video_quant_matrix_4x4_get_zigzag_from_raster:
+ * gst_h264_quant_matrix_4x4_get_zigzag_from_raster:
  * @out_quant: (out): The resulting quantization matrix
  * @quant: The source quantization matrix
  *
@@ -2348,7 +2348,7 @@ gst_h264_video_quant_matrix_8x8_get_raster_from_zigzag (guint8 out_quant[64],
  * Since: 1.4
  */
 void
-gst_h264_video_quant_matrix_4x4_get_zigzag_from_raster (guint8 out_quant[16],
+gst_h264_quant_matrix_4x4_get_zigzag_from_raster (guint8 out_quant[16],
     const guint8 quant[16])
 {
   guint i;
@@ -2373,7 +2373,7 @@ gst_h264_video_quant_matrix_4x4_get_zigzag_from_raster (guint8 out_quant[16],
  * Since: 1.4
  */
 void
-gst_h264_video_quant_matrix_4x4_get_raster_from_zigzag (guint8 out_quant[16],
+gst_h264_quant_matrix_4x4_get_raster_from_zigzag (guint8 out_quant[16],
     const guint8 quant[16])
 {
   guint i;
@@ -2382,4 +2382,79 @@ gst_h264_video_quant_matrix_4x4_get_raster_from_zigzag (guint8 out_quant[16],
 
   for (i = 0; i < 16; i++)
     out_quant[zigzag_4x4[i]] = quant[i];
+}
+
+/**
+ * gst_h264_video_calculate_framerate:
+ * @sps: Current Sequence Parameter Set
+ * @field_pic_flag: Current @field_pic_flag, obtained from latest slice header
+ * @pic_struct: @pic_struct value if available, 0 otherwise
+ * @fps_num: (out): The resulting fps numerator
+ * @fps_den: (out): The resulting fps denominator
+ *
+ * Calculate framerate of a video sequence using @sps VUI information,
+ * @field_pic_flag from a slice header and @pic_struct from #GstH264PicTiming SEI
+ * message.
+ *
+ * If framerate is variable or can't be determined, @fps_num will be set to 0
+ * and @fps_den to 1.
+ */
+void
+gst_h264_video_calculate_framerate (const GstH264SPS * sps,
+    guint field_pic_flag, guint pic_struct, gint * fps_num, gint * fps_den)
+{
+  gint num = 0;
+  gint den = 1;
+
+  /* To calculate framerate, we use this formula:
+   *          time_scale                1                         1
+   * fps = -----------------  x  ---------------  x  ------------------------
+   *       num_units_in_tick     DeltaTfiDivisor     (field_pic_flag ? 2 : 1)
+   *
+   * See H264 specification E2.1 for more details.
+   */
+
+  if (sps) {
+    if (sps->vui_parameters_present_flag) {
+      const GstH264VUIParams *vui = &sps->vui_parameters;
+      if (vui->timing_info_present_flag && vui->fixed_frame_rate_flag) {
+        int delta_tfi_divisor = 1;
+        num = vui->time_scale;
+        den = vui->num_units_in_tick;
+
+        if (vui->pic_struct_present_flag) {
+          switch (pic_struct) {
+            case 1:
+            case 2:
+              delta_tfi_divisor = 1;
+              break;
+            case 0:
+            case 3:
+            case 4:
+              delta_tfi_divisor = 2;
+              break;
+            case 5:
+            case 6:
+              delta_tfi_divisor = 3;
+              break;
+            case 7:
+              delta_tfi_divisor = 4;
+              break;
+            case 8:
+              delta_tfi_divisor = 6;
+              break;
+          }
+        } else {
+          delta_tfi_divisor = field_pic_flag ? 1 : 2;
+        }
+        den *= delta_tfi_divisor;
+
+        /* Picture is two fields ? */
+        den *= (field_pic_flag ? 2 : 1);
+      }
+    }
+  }
+
+  *fps_num = num;
+  *fps_den = den;
 }
