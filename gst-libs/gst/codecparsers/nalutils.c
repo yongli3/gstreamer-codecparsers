@@ -130,13 +130,13 @@ nal_reader_skip (NalReader * nr, guint nbits)
 
 /* Generic version to skip any number of bits */
 gboolean
-nal_reader_skip_long (NalReader * nr, guint remaining)
+nal_reader_skip_long (NalReader * nr, guint nbits)
 {
   /* Leave out enough bits in the cache once we are finished */
   const guint skip_size = 4 * sizeof (nr->cache);
-  guint nbits;
+  guint remaining = nbits;
 
-  nbits = remaining % skip_size;
+  nbits %= skip_size;
   while (remaining > 0) {
     if (!nal_reader_skip (nr, nbits))
       return FALSE;
