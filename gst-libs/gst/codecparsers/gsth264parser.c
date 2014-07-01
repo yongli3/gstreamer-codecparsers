@@ -359,6 +359,32 @@ gst_h264_sps_copy (GstH264SPS * dst_sps, const GstH264SPS * src_sps)
   return TRUE;
 }
 
+/*
+ * gst_h264_pps_copy:
+ * @dst_pps: The destination #GstH264PPS to copy into
+ * @src_pps: The source #GstH264PPS to copy from
+ *
+ * Copies @src_pps into @dst_pps.
+ *
+ * Returns: %TRUE if everything went fine, %FALSE otherwise
+ */
+static gboolean
+gst_h264_pps_copy (GstH264PPS * dst_pps, const GstH264PPS * src_pps)
+{
+  g_return_val_if_fail (dst_pps != NULL, FALSE);
+  g_return_val_if_fail (src_pps != NULL, FALSE);
+
+  gst_h264_pps_clear (dst_pps);
+
+  *dst_pps = *src_pps;
+
+  if (src_pps->slice_group_id)
+    dst_pps->slice_group_id = g_memdup (src_pps->slice_group_id,
+        src_pps->pic_size_in_map_units_minus1 + 1);
+
+  return TRUE;
+}
+
 /****** Parsing functions *****/
 
 static gboolean
@@ -1225,6 +1251,8 @@ gst_h264_nal_parser_free (GstH264NalParser * nalparser)
 {
   guint i;
 
+  for (i = 0; i < GST_H264_MAX_PPS_COUNT; i++)
+    gst_h264_pps_clear (&nalparser->pps[i]);
   for (i = 0; i < GST_H264_MAX_SPS_COUNT; i++)
     gst_h264_sps_clear (&nalparser->sps[i]);
   g_slice_free (GstH264NalParser, nalparser);
@@ -1299,7 +1327,7 @@ gst_h264_parser_identify_nalu_unchecked (GstH264NalParser * nalparser,
   if (nalu->type == GST_H264_NAL_SEQ_END ||
       nalu->type == GST_H264_NAL_STREAM_END) {
     GST_DEBUG ("end-of-seq or end-of-stream nal found");
-    nalu->size = 0;
+    nalu->size = 1;
     return GST_H264_PARSER_OK;
   }
 
@@ -1329,7 +1357,7 @@ gst_h264_parser_identify_nalu (GstH264NalParser * nalparser,
       gst_h264_parser_identify_nalu_unchecked (nalparser, data, offset, size,
       nalu);
 
-  if (res != GST_H264_PARSER_OK || nalu->size == 0)
+  if (res != GST_H264_PARSER_OK || nalu->size == 1)
     goto beach;
 
   off2 = scan_for_start_codes (data + nalu->offset, size - nalu->offset);
@@ -1873,6 +1901,10 @@ error:
  *
  * Parses @data, and fills the @pps structure.
  *
+ * The resulting @pps data structure shall be deallocated with the
+ * gst_h264_pps_clear() function when it is no longer needed, or prior
+ * to parsing a new PPS NAL unit.
+ *
  * Returns: a #GstH264ParserResult
  */
 GstH264ParserResult
@@ -1994,6 +2026,7 @@ done:
 error:
   GST_WARNING ("error parsing \"Picture parameter set\"");
   pps->valid = FALSE;
+  gst_h264_pps_clear (pps);
   return GST_H264_PARSER_ERROR;
 }
 
@@ -2004,6 +2037,10 @@ error:
  * @pps: The #GstH264PPS to fill.
  *
  * Parses @data, and fills the @pps structure.
+ *
+ * The resulting @pps data structure shall be deallocated with the
+ * gst_h264_pps_clear() function when it is no longer needed, or prior
+ * to parsing a new PPS NAL unit.
  *
  * Returns: a #GstH264ParserResult
  */
@@ -2016,11 +2053,29 @@ gst_h264_parser_parse_pps (GstH264NalParser * nalparser,
   if (res == GST_H264_PARSER_OK) {
     GST_DEBUG ("adding picture parameter set with id: %d to array", pps->id);
 
-    nalparser->pps[pps->id] = *pps;
+    if (!gst_h264_pps_copy (&nalparser->pps[pps->id], pps))
+      return GST_H264_PARSER_ERROR;
     nalparser->last_pps = &nalparser->pps[pps->id];
   }
 
   return res;
+}
+
+/**
+ * gst_h264_pps_clear:
+ * @pps: The #GstH264PPS to free
+ *
+ * Clears all @pps internal resources.
+ *
+ * Since: 1.4
+ */
+void
+gst_h264_pps_clear (GstH264PPS * pps)
+{
+  g_return_if_fail (pps != NULL);
+
+  g_free (pps->slice_group_id);
+  pps->slice_group_id = NULL;
 }
 
 /**
