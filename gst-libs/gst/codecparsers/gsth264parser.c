@@ -216,6 +216,7 @@ gst_h264_parse_nalu_header (GstH264NalUnit * nalu)
   nalu->header_bytes = 1;
 
   nalu->extension_type = GST_H264_NAL_EXTENSION_NONE;
+
   switch (nalu->type) {
     case GST_H264_NAL_PREFIX_UNIT:
     case GST_H264_NAL_SLICE_EXT:
@@ -245,9 +246,37 @@ gst_h264_parse_nalu_header (GstH264NalUnit * nalu)
       }
       nalu->header_bytes += 3;
       break;
+    default:
+      break;
   }
 
   GST_DEBUG ("Nal type %u, ref_idc %u", nalu->type, nalu->ref_idc);
+  return TRUE;
+}
+
+/*
+ * gst_h264_pps_copy:
+ * @dst_pps: The destination #GstH264PPS to copy into
+ * @src_pps: The source #GstH264PPS to copy from
+ *
+ * Copies @src_pps into @dst_pps.
+ *
+ * Returns: %TRUE if everything went fine, %FALSE otherwise
+ */
+static gboolean
+gst_h264_pps_copy (GstH264PPS * dst_pps, const GstH264PPS * src_pps)
+{
+  g_return_val_if_fail (dst_pps != NULL, FALSE);
+  g_return_val_if_fail (src_pps != NULL, FALSE);
+
+  gst_h264_pps_clear (dst_pps);
+
+  *dst_pps = *src_pps;
+
+  if (src_pps->slice_group_id)
+    dst_pps->slice_group_id = g_memdup (src_pps->slice_group_id,
+        src_pps->pic_size_in_map_units_minus1 + 1);
+
   return TRUE;
 }
 
@@ -356,32 +385,6 @@ gst_h264_sps_copy (GstH264SPS * dst_sps, const GstH264SPS * src_sps)
         return FALSE;
       break;
   }
-  return TRUE;
-}
-
-/*
- * gst_h264_pps_copy:
- * @dst_pps: The destination #GstH264PPS to copy into
- * @src_pps: The source #GstH264PPS to copy from
- *
- * Copies @src_pps into @dst_pps.
- *
- * Returns: %TRUE if everything went fine, %FALSE otherwise
- */
-static gboolean
-gst_h264_pps_copy (GstH264PPS * dst_pps, const GstH264PPS * src_pps)
-{
-  g_return_val_if_fail (dst_pps != NULL, FALSE);
-  g_return_val_if_fail (src_pps != NULL, FALSE);
-
-  gst_h264_pps_clear (dst_pps);
-
-  *dst_pps = *src_pps;
-
-  if (src_pps->slice_group_id)
-    dst_pps->slice_group_id = g_memdup (src_pps->slice_group_id,
-        src_pps->pic_size_in_map_units_minus1 + 1);
-
   return TRUE;
 }
 
@@ -879,9 +882,9 @@ gst_h264_parser_parse_buffering_period (GstH264NalParser * nalparser,
 
       for (sched_sel_idx = 0; sched_sel_idx <= hrd->cpb_cnt_minus1;
           sched_sel_idx++) {
-        READ_UINT8 (nr, per->nal_initial_cpb_removal_delay[sched_sel_idx],
+        READ_UINT32 (nr, per->nal_initial_cpb_removal_delay[sched_sel_idx],
             nbits);
-        READ_UINT8 (nr,
+        READ_UINT32 (nr,
             per->nal_initial_cpb_removal_delay_offset[sched_sel_idx], nbits);
       }
     }
@@ -893,9 +896,9 @@ gst_h264_parser_parse_buffering_period (GstH264NalParser * nalparser,
 
       for (sched_sel_idx = 0; sched_sel_idx <= hrd->cpb_cnt_minus1;
           sched_sel_idx++) {
-        READ_UINT8 (nr, per->vcl_initial_cpb_removal_delay[sched_sel_idx],
+        READ_UINT32 (nr, per->vcl_initial_cpb_removal_delay[sched_sel_idx],
             nbits);
-        READ_UINT8 (nr,
+        READ_UINT32 (nr,
             per->vcl_initial_cpb_removal_delay_offset[sched_sel_idx], nbits);
       }
     }
@@ -979,6 +982,9 @@ gst_h264_parser_parse_pic_timing (GstH264NalParser * nalparser,
   }
 
   /* default values */
+  tim->cpb_removal_delay = 0;
+  tim->dpb_output_delay = 0;
+  tim->pic_struct_present_flag = FALSE;
   memset (tim->clock_timestamp_flag, 0, 3);
 
   if (nalparser->last_sps->vui_parameters_present_flag) {
@@ -1023,6 +1029,31 @@ gst_h264_parser_parse_pic_timing (GstH264NalParser * nalparser,
 
 error:
   GST_WARNING ("error parsing \"Picture timing\"");
+  return GST_H264_PARSER_ERROR;
+}
+
+static GstH264ParserResult
+gst_h264_parser_parse_recovery_point (GstH264NalParser * nalparser,
+    GstH264RecoveryPoint * rp, NalReader * nr)
+{
+  GstH264SPS *const sps = nalparser->last_sps;
+
+  GST_DEBUG ("parsing \"Recovery point\"");
+  if (!sps || !sps->valid) {
+    GST_WARNING ("didn't get the associated sequence paramater set for the "
+        "current access unit");
+    goto error;
+  }
+
+  READ_UE_ALLOWED (nr, rp->recovery_frame_cnt, 0, sps->max_frame_num - 1);
+  READ_UINT8 (nr, rp->exact_match_flag, 1);
+  READ_UINT8 (nr, rp->broken_link_flag, 1);
+  READ_UINT8 (nr, rp->changing_slice_group_idc, 2);
+
+  return GST_H264_PARSER_OK;
+
+error:
+  GST_WARNING ("error parsing \"Recovery point\"");
   return GST_H264_PARSER_ERROR;
 }
 
@@ -1092,44 +1123,20 @@ gst_h264_parser_parse_frame_packing (GstH264NalParser * nalparser,
         16384);
   }
 
+  READ_UINT8 (nr, frame_packing_extension_flag, 1);
+
   /* All data that follows within a frame packing arrangement SEI message
      after the value 1 for frame_packing_arrangement_extension_flag shall
      be ignored (D.2.25) */
-  READ_UINT8 (nr, frame_packing_extension_flag, 1);
-  if (!frame_packing_extension_flag)
-    goto error;
-  nal_reader_skip_long (nr,
-      payload_size - (nal_reader_get_pos (nr) - start_pos));
+  if (frame_packing_extension_flag) {
+    nal_reader_skip_long (nr,
+        payload_size - (nal_reader_get_pos (nr) - start_pos));
+  }
 
   return GST_H264_PARSER_OK;
 
 error:
   GST_WARNING ("error parsing \"Frame Packing Arrangement\"");
-  return GST_H264_PARSER_ERROR;
-}
-
-static GstH264ParserResult
-gst_h264_parser_parse_recovery_point (GstH264NalParser * nalparser,
-    GstH264RecoveryPoint * rp, NalReader * nr)
-{
-  GstH264SPS *const sps = nalparser->last_sps;
-
-  GST_DEBUG ("parsing \"Recovery point\"");
-  if (!sps || !sps->valid) {
-    GST_WARNING ("didn't get the associated sequence paramater set for the "
-        "current access unit");
-    goto error;
-  }
-
-  READ_UE_ALLOWED (nr, rp->recovery_frame_cnt, 0, sps->max_frame_num - 1);
-  READ_UINT8 (nr, rp->exact_match_flag, 1);
-  READ_UINT8 (nr, rp->broken_link_flag, 1);
-  READ_UINT8 (nr, rp->changing_slice_group_idc, 2);
-
-  return GST_H264_PARSER_OK;
-
-error:
-  GST_WARNING ("error parsing \"Recovery point\"");
   return GST_H264_PARSER_ERROR;
 }
 
@@ -1251,10 +1258,10 @@ gst_h264_nal_parser_free (GstH264NalParser * nalparser)
 {
   guint i;
 
-  for (i = 0; i < GST_H264_MAX_PPS_COUNT; i++)
-    gst_h264_pps_clear (&nalparser->pps[i]);
   for (i = 0; i < GST_H264_MAX_SPS_COUNT; i++)
     gst_h264_sps_clear (&nalparser->sps[i]);
+  for (i = 0; i < GST_H264_MAX_PPS_COUNT; i++)
+    gst_h264_pps_clear (&nalparser->pps[i]);
   g_slice_free (GstH264NalParser, nalparser);
 
   nalparser = NULL;
@@ -1826,6 +1833,8 @@ error:
  * syntax elements are not parsed and no extra memory is allocated.
  *
  * Returns: a #GstH264ParserResult
+ *
+ * Since: 1.6
  */
 GstH264ParserResult
 gst_h264_parser_parse_subset_sps (GstH264NalParser * nalparser,
@@ -1862,6 +1871,8 @@ gst_h264_parser_parse_subset_sps (GstH264NalParser * nalparser,
  * syntax elements are not parsed and no extra memory is allocated.
  *
  * Returns: a #GstH264ParserResult
+ *
+ * Since: 1.6
  */
 GstH264ParserResult
 gst_h264_parse_subset_sps (GstH264NalUnit * nalu, GstH264SPS * sps,
@@ -2265,40 +2276,6 @@ error:
   return GST_H264_PARSER_ERROR;
 }
 
-/**
- * gst_h264_parser_parse_sei:
- * @nalparser: a #GstH264NalParser
- * @nalu: The #GST_H264_NAL_SEI #GstH264NalUnit to parse
- * @messages: The GArray of #GstH264SEIMessage to fill. The caller must free it when done.
- *
- * Parses @data, create and fills the @messages array.
- *
- * Returns: a #GstH264ParserResult
- */
-GstH264ParserResult
-gst_h264_parser_parse_sei (GstH264NalParser * nalparser, GstH264NalUnit * nalu,
-    GArray ** messages)
-{
-  NalReader nr;
-  GstH264SEIMessage sei;
-  GstH264ParserResult res;
-
-  GST_DEBUG ("parsing SEI nal");
-  nal_reader_init (&nr, nalu->data + nalu->offset + nalu->header_bytes,
-      nalu->size - nalu->header_bytes);
-  *messages = g_array_new (FALSE, FALSE, sizeof (GstH264SEIMessage));
-
-  do {
-    res = gst_h264_parser_parse_sei_message (nalparser, &nr, &sei);
-    if (res == GST_H264_PARSER_OK)
-      g_array_append_val (*messages, sei);
-    else
-      break;
-  } while (nal_reader_has_more_data (&nr));
-
-  return res;
-}
-
 /* Free MVC-specific data from subset SPS header */
 static void
 gst_h264_sps_mvc_clear (GstH264SPS * sps)
@@ -2334,6 +2311,8 @@ gst_h264_sps_mvc_clear (GstH264SPS * sps)
  * @sps: The #GstH264SPS to free
  *
  * Clears all @sps internal resources.
+ *
+ * Since: 1.6
  */
 void
 gst_h264_sps_clear (GstH264SPS * sps)
@@ -2345,6 +2324,40 @@ gst_h264_sps_clear (GstH264SPS * sps)
       gst_h264_sps_mvc_clear (sps);
       break;
   }
+}
+
+/**
+ * gst_h264_parser_parse_sei:
+ * @nalparser: a #GstH264NalParser
+ * @nalu: The #GST_H264_NAL_SEI #GstH264NalUnit to parse
+ * @messages: The GArray of #GstH264SEIMessage to fill. The caller must free it when done.
+ *
+ * Parses @data, create and fills the @messages array.
+ *
+ * Returns: a #GstH264ParserResult
+ */
+GstH264ParserResult
+gst_h264_parser_parse_sei (GstH264NalParser * nalparser, GstH264NalUnit * nalu,
+    GArray ** messages)
+{
+  NalReader nr;
+  GstH264SEIMessage sei;
+  GstH264ParserResult res;
+
+  GST_DEBUG ("parsing SEI nal");
+  nal_reader_init (&nr, nalu->data + nalu->offset + nalu->header_bytes,
+      nalu->size - nalu->header_bytes);
+  *messages = g_array_new (FALSE, FALSE, sizeof (GstH264SEIMessage));
+
+  do {
+    res = gst_h264_parser_parse_sei_message (nalparser, &nr, &sei);
+    if (res == GST_H264_PARSER_OK)
+      g_array_append_val (*messages, sei);
+    else
+      break;
+  } while (nal_reader_has_more_data (&nr));
+
+  return res;
 }
 
 /**
