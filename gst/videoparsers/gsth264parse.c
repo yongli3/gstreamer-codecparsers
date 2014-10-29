@@ -1364,6 +1364,19 @@ gst_h264_parse_update_src_caps (GstH264Parse * h264parse, GstCaps * caps)
         gst_buffer_replace (&h264parse->codec_data, NULL);
       }
 
+      /* set profile and level in caps */
+      if (sps) {
+        GstMapInfo map;
+        GstBuffer *sps_buf = h264parse->sps_nals[sps->id];
+
+        if (sps_buf) {
+          gst_buffer_map (sps_buf, &map, GST_MAP_READ);
+          gst_codec_utils_h264_caps_set_level_and_profile (caps,
+              map.data + 1, map.size - 1);
+          gst_buffer_unmap (sps_buf, &map);
+        }
+      }
+
       gst_pad_set_caps (GST_BASE_PARSE_SRC_PAD (h264parse), caps);
     }
 
@@ -1680,6 +1693,15 @@ gst_h264_parse_pre_push_frame (GstBaseParse * parse, GstBaseParseFrame * frame)
 
     /* codec tag */
     caps = gst_pad_get_current_caps (GST_BASE_PARSE_SRC_PAD (parse));
+    if (caps == NULL) {
+      if (GST_PAD_IS_FLUSHING (GST_BASE_PARSE_SRC_PAD (h264parse))) {
+        GST_INFO_OBJECT (h264parse, "Src pad is flushing");
+        return GST_FLOW_FLUSHING;
+      } else {
+        GST_INFO_OBJECT (h264parse, "Src pad is not negotiated!");
+        return GST_FLOW_NOT_NEGOTIATED;
+      }
+    }
     gst_pb_utils_add_codec_description_to_tag_list (taglist,
         GST_TAG_VIDEO_CODEC, caps);
     gst_caps_unref (caps);
