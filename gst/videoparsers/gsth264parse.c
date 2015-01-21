@@ -429,7 +429,7 @@ gst_h264_parser_store_nal (GstH264Parse * h264parse, guint id,
   GstBuffer *buf, **store;
   guint size = nalu->size, store_size;
 
-  if (naltype == GST_H264_NAL_SPS) {
+  if (naltype == GST_H264_NAL_SPS || naltype == GST_H264_NAL_SUBSET_SPS) {
     store_size = GST_H264_MAX_SPS_COUNT;
     store = h264parse->sps_nals;
     GST_DEBUG_OBJECT (h264parse, "storing sps %u", id);
@@ -472,13 +472,16 @@ static const gchar *nal_names[] = {
   "AU delimiter",
   "Sequence End",
   "Stream End",
-  "Filler Data"
+  "Filler Data",
+  "SPS extension",
+  "Prefix",
+  "SPS Subset"
 };
 
 static const gchar *
 _nal_name (GstH264NalUnitType nal_type)
 {
-  if (nal_type <= GST_H264_NAL_FILLER_DATA)
+  if (nal_type <= GST_H264_NAL_SUBSET_SPS)
     return nal_names[nal_type];
   return "Invalid";
 }
@@ -561,11 +564,18 @@ gst_h264_parse_process_nal (GstH264Parse * h264parse, GstH264NalUnit * nalu)
       nal_type, _nal_name (nal_type), nalu->size);
 
   switch (nal_type) {
+    case GST_H264_NAL_SUBSET_SPS:
+      if (!GST_H264_PARSE_STATE_VALID (h264parse, GST_H264_PARSE_STATE_GOT_SPS))
+        return FALSE;
+      pres = gst_h264_parser_parse_subset_sps (nalparser, nalu, &sps, TRUE);
+      goto process_sps;
+
     case GST_H264_NAL_SPS:
       /* reset state, everything else is obsolete */
       h264parse->state = 0;
-
       pres = gst_h264_parser_parse_sps (nalparser, nalu, &sps, TRUE);
+
+    process_sps:
       /* arranged for a fallback sps.id, so use that one and only warn */
       if (pres != GST_H264_PARSER_OK) {
         GST_WARNING_OBJECT (h264parse, "failed to parse SPS:");
@@ -644,6 +654,7 @@ gst_h264_parse_process_nal (GstH264Parse * h264parse, GstH264NalUnit * nalu)
     case GST_H264_NAL_SLICE_DPB:
     case GST_H264_NAL_SLICE_DPC:
     case GST_H264_NAL_SLICE_IDR:
+    case GST_H264_NAL_SLICE_EXT:
       /* expected state: got-sps|got-pps (valid picture headers) */
       h264parse->state &= GST_H264_PARSE_STATE_VALID_PICTURE_HEADERS;
       if (!GST_H264_PARSE_STATE_VALID (h264parse,
@@ -651,13 +662,15 @@ gst_h264_parse_process_nal (GstH264Parse * h264parse, GstH264NalUnit * nalu)
         return FALSE;
 
       /* don't need to parse the whole slice (header) here */
-      if (*(nalu->data + nalu->offset + 1) & 0x80) {
+      if (*(nalu->data + nalu->offset + nalu->header_bytes) & 0x80) {
         /* means first_mb_in_slice == 0 */
         /* real frame data */
         GST_DEBUG_OBJECT (h264parse, "first_mb_in_slice = 0");
         h264parse->frame_start = TRUE;
       }
       GST_DEBUG_OBJECT (h264parse, "frame start: %i", h264parse->frame_start);
+      if (nal_type == GST_H264_NAL_SLICE_EXT && !GST_H264_IS_MVC_NALU (nalu))
+        break;
       {
         GstH264SliceHdr slice;
 
@@ -754,8 +767,9 @@ gst_h264_parse_collect_nal (GstH264Parse * h264parse, const guint8 * data,
    * and also works with broken frame_num in NAL
    * (where spec-wise would fail) */
   nal_type = nnalu.type;
-  complete = h264parse->picture_start && (nal_type >= GST_H264_NAL_SEI &&
-      nal_type <= GST_H264_NAL_AU_DELIMITER);
+  complete = h264parse->picture_start && ((nal_type >= GST_H264_NAL_SEI &&
+          nal_type <= GST_H264_NAL_AU_DELIMITER) ||
+      (nal_type >= 14 && nal_type <= 18));
 
   GST_LOG_OBJECT (h264parse, "next nal type: %d %s", nal_type,
       _nal_name (nal_type));
@@ -763,7 +777,7 @@ gst_h264_parse_collect_nal (GstH264Parse * h264parse, const guint8 * data,
       || nal_type == GST_H264_NAL_SLICE_DPA
       || nal_type == GST_H264_NAL_SLICE_IDR) &&
       /* first_mb_in_slice == 0 considered start of frame */
-      (nnalu.data[nnalu.offset + 1] & 0x80);
+      (nnalu.data[nnalu.offset + nnalu.header_bytes] & 0x80);
 
   GST_LOG_OBJECT (h264parse, "au complete: %d", complete);
 
@@ -1291,8 +1305,15 @@ get_compatible_profile_caps (GstH264SPS * sps)
       }
       break;
     case GST_H264_PROFILE_MULTIVIEW_HIGH:
-      /* Fix: should add GST_H264_PROFILE_STEREO_HIGH as compatible
-       * profile if number of views == 2. */
+      if (sps->extension_type == GST_H264_NAL_EXTENSION_MVC
+          && sps->extension.mvc.num_views_minus1 == 1) {
+        static const gchar *profile_array[] =
+            { "stereo-high", "multiview-high", NULL };
+        profiles = profile_array;
+      } else {
+        static const gchar *profile_array[] = { "multiview-high", NULL };
+        profiles = profile_array;
+      }
       break;
     default:
       break;
