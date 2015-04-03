@@ -52,6 +52,14 @@ void            gst_byte_reader_free            (GstByteReader *reader);
 
 void            gst_byte_reader_init            (GstByteReader *reader, const guint8 *data, guint size);
 
+gboolean        gst_byte_reader_peek_sub_reader (GstByteReader * reader,
+                                                 GstByteReader * sub_reader,
+                                                 guint           size);
+
+gboolean        gst_byte_reader_get_sub_reader  (GstByteReader * reader,
+                                                 GstByteReader * sub_reader,
+                                                 guint           size);
+
 gboolean        gst_byte_reader_set_pos         (GstByteReader *reader, guint pos);
 guint           gst_byte_reader_get_pos         (const GstByteReader *reader);
 
@@ -141,6 +149,12 @@ guint           gst_byte_reader_masked_scan_uint32 (const GstByteReader * reader
                                                     guint32               pattern,
                                                     guint                 offset,
                                                     guint                 size);
+guint           gst_byte_reader_masked_scan_uint32_peek (const GstByteReader * reader,
+                                                         guint32 mask,
+                                                         guint32 pattern,
+                                                         guint offset,
+                                                         guint size,
+                                                         guint32 * value);
 
 /**
  * GST_BYTE_READER_INIT:
@@ -450,12 +464,38 @@ _gst_byte_reader_init_inline (GstByteReader * reader, const guint8 * data, guint
 }
 
 static inline gboolean
+_gst_byte_reader_peek_sub_reader_inline (GstByteReader * reader,
+    GstByteReader * sub_reader, guint size)
+{
+  g_return_val_if_fail (reader != NULL, FALSE);
+  g_return_val_if_fail (sub_reader != NULL, FALSE);
+
+  if (_gst_byte_reader_get_remaining_unchecked (reader) < size)
+    return FALSE;
+
+  sub_reader->data = reader->data + reader->byte;
+  sub_reader->byte = 0;
+  sub_reader->size = size;
+  return TRUE;
+}
+
+static inline gboolean
+_gst_byte_reader_get_sub_reader_inline (GstByteReader * reader,
+    GstByteReader * sub_reader, guint size)
+{
+  if (!_gst_byte_reader_peek_sub_reader_inline (reader, sub_reader, size))
+    return FALSE;
+  gst_byte_reader_skip_unchecked (reader, size);
+  return TRUE;
+}
+
+static inline gboolean
 _gst_byte_reader_dup_data_inline (GstByteReader * reader, guint size, guint8 ** val)
 {
   g_return_val_if_fail (reader != NULL, FALSE);
   g_return_val_if_fail (val != NULL, FALSE);
 
-  if (G_UNLIKELY (size > reader->size || _gst_byte_reader_get_remaining_inline (reader) < size))
+  if (G_UNLIKELY (size > reader->size || _gst_byte_reader_get_remaining_unchecked (reader) < size))
     return FALSE;
 
   *val = gst_byte_reader_dup_data_unchecked (reader, size);
@@ -468,7 +508,7 @@ _gst_byte_reader_get_data_inline (GstByteReader * reader, guint size, const guin
   g_return_val_if_fail (reader != NULL, FALSE);
   g_return_val_if_fail (val != NULL, FALSE);
 
-  if (G_UNLIKELY (size > reader->size || _gst_byte_reader_get_remaining_inline (reader) < size))
+  if (G_UNLIKELY (size > reader->size || _gst_byte_reader_get_remaining_unchecked (reader) < size))
     return FALSE;
 
   *val = gst_byte_reader_get_data_unchecked (reader, size);
@@ -481,7 +521,7 @@ _gst_byte_reader_peek_data_inline (const GstByteReader * reader, guint size, con
   g_return_val_if_fail (reader != NULL, FALSE);
   g_return_val_if_fail (val != NULL, FALSE);
 
-  if (G_UNLIKELY (size > reader->size || _gst_byte_reader_get_remaining_inline (reader) < size))
+  if (G_UNLIKELY (size > reader->size || _gst_byte_reader_get_remaining_unchecked (reader) < size))
     return FALSE;
 
   *val = gst_byte_reader_peek_data_unchecked (reader);
