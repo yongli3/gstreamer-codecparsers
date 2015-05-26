@@ -1,7 +1,7 @@
 # codecparsers package version number
-m4_define([gst_codecparsers_major_version], [0])
-m4_define([gst_codecparsers_minor_version], [10])
-m4_define([gst_codecparsers_micro_version], [23])
+m4_define([gst_codecparsers_major_version], [1])
+m4_define([gst_codecparsers_minor_version], [0])
+m4_define([gst_codecparsers_micro_version], [0])
 m4_define([gst_codecparsers_pre_version],   [1])
 m4_define([gst_codecparsers_version],
           [gst_codecparsers_major_version.gst_codecparsers_minor_version.gst_codecparsers_micro_version])
@@ -19,18 +19,18 @@ m4_define([glib_version],
           [glib_major_version.glib_minor_version.glib_micro_version])
 
 # gst version number
-m4_define([gst_major_version], [0])
-m4_define([gst_minor_version], [10])
-m4_define([gst_micro_version], [36])
+m4_define([gst_major_version], [1])
+m4_define([gst_minor_version], [0])
+m4_define([gst_micro_version], [0])
 m4_define([gst_major_minor_version],
           [gst_major_version.gst_minor_version])
 m4_define([gst_version],
           [gst_major_version.gst_minor_version.gst_micro_version])
 
 # gst plugins-base version number
-m4_define([gst_plugins_base_major_version], [0])
-m4_define([gst_plugins_base_minor_version], [10])
-m4_define([gst_plugins_base_micro_version], [31])
+m4_define([gst_plugins_base_major_version], [1])
+m4_define([gst_plugins_base_minor_version], [0])
+m4_define([gst_plugins_base_micro_version], [0])
 m4_define([gst_plugins_base_version],
           [gst_plugins_base_major_version.gst_plugins_base_minor_version.gst_plugins_base_micro_version])
 
