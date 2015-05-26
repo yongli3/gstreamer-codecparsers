@@ -41,8 +41,7 @@ GST_DEBUG_CATEGORY (h264_parse_debug);
 enum
 {
   PROP_0,
-  PROP_CONFIG_INTERVAL,
-  PROP_LAST
+  PROP_CONFIG_INTERVAL
 };
 
 enum
@@ -361,7 +360,7 @@ gst_h264_parse_negotiate (GstH264Parse * h264parse, gint in_format,
   caps = gst_pad_get_allowed_caps (GST_BASE_PARSE_SRC_PAD (h264parse));
   GST_DEBUG_OBJECT (h264parse, "allowed caps: %" GST_PTR_FORMAT, caps);
 
-  /* concentrate on leading structure, since decodebin2 parser
+  /* concentrate on leading structure, since decodebin parser
    * capsfilter always includes parser template caps */
   if (caps) {
     caps = gst_caps_truncate (caps);
@@ -545,6 +544,16 @@ gst_h264_parse_process_sei (GstH264Parse * h264parse, GstH264NalUnit * nalu)
             sei.payload.recovery_point.broken_link_flag,
             sei.payload.recovery_point.changing_slice_group_idc);
         break;
+
+        /* Additional messages that are not innerly useful to the
+         * element but for debugging purposes */
+      case GST_H264_SEI_STEREO_VIDEO_INFO:
+        GST_LOG_OBJECT (h264parse, "stereo video information message");
+        break;
+      case GST_H264_SEI_FRAME_PACKING:
+        GST_LOG_OBJECT (h264parse, "frame packing arrangement message: type %d",
+            sei.payload.frame_packing.frame_packing_type);
+        break;
     }
   }
   g_array_free (messages, TRUE);
@@ -646,6 +655,7 @@ gst_h264_parse_process_nal (GstH264Parse * h264parse, GstH264NalUnit * nalu)
       if (!GST_H264_PARSE_STATE_VALID (h264parse, GST_H264_PARSE_STATE_GOT_SPS))
         return FALSE;
 
+      h264parse->header |= TRUE;
       gst_h264_parse_process_sei (h264parse, nalu);
       /* mark SEI pos */
       if (h264parse->sei_pos == -1) {
@@ -877,7 +887,6 @@ gst_h264_parse_handle_frame_packetized (GstBaseParse * parse,
     if (h264parse->split_packetized) {
       GST_ELEMENT_ERROR (h264parse, STREAM, FAILED, (NULL),
           ("invalid AVC input data"));
-      gst_buffer_unref (buffer);
 
       return GST_FLOW_ERROR;
     } else {
@@ -1387,6 +1396,121 @@ ensure_caps_profile (GstH264Parse * h264parse, GstCaps * caps, GstH264SPS * sps)
   gst_caps_unref (filter_caps);
 }
 
+static const gchar *
+digit_to_string (guint digit)
+{
+  static const char itoa[][2] = {
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"
+  };
+
+  if (G_LIKELY (digit < 10))
+    return itoa[digit];
+  else
+    return NULL;
+}
+
+static const gchar *
+get_profile_string (GstH264SPS * sps)
+{
+  const gchar *profile = NULL;
+
+  switch (sps->profile_idc) {
+    case 66:
+      if (sps->constraint_set1_flag)
+        profile = "constrained-baseline";
+      else
+        profile = "baseline";
+      break;
+    case 77:
+      profile = "main";
+      break;
+    case 88:
+      profile = "extended";
+      break;
+    case 100:
+      profile = "high";
+      break;
+    case 110:
+      if (sps->constraint_set3_flag)
+        profile = "high-10-intra";
+      else
+        profile = "high-10";
+      break;
+    case 122:
+      if (sps->constraint_set3_flag)
+        profile = "high-4:2:2-intra";
+      else
+        profile = "high-4:2:2";
+      break;
+    case 244:
+      if (sps->constraint_set3_flag)
+        profile = "high-4:4:4-intra";
+      else
+        profile = "high-4:4:4";
+      break;
+    case 44:
+      profile = "cavlc-4:4:4-intra";
+      break;
+    case 118:
+      profile = "multiview-high";
+      break;
+    case 128:
+      profile = "stereo-high";
+      break;
+    case 83:
+      if (sps->constraint_set5_flag)
+        profile = "scalable-constrained-baseline";
+      else
+        profile = "scalable-baseline";
+      break;
+    case 86:
+      profile = "scalable-high";
+      break;
+    default:
+      return NULL;
+  }
+
+  return profile;
+}
+
+static const gchar *
+get_level_string (GstH264SPS * sps)
+{
+  if ((sps->level_idc == 11 && sps->constraint_set3_flag)
+      || sps->level_idc == 9)
+    return "1b";
+  else if (sps->level_idc % 10 == 0)
+    return digit_to_string (sps->level_idc / 10);
+  else {
+    switch (sps->level_idc) {
+      case 11:
+        return "1.1";
+      case 12:
+        return "1.2";
+      case 13:
+        return "1.3";
+      case 21:
+        return "2.1";
+      case 22:
+        return "2.2";
+      case 31:
+        return "3.1";
+      case 32:
+        return "3.2";
+      case 41:
+        return "4.1";
+      case 42:
+        return "4.2";
+      case 51:
+        return "5.1";
+      case 52:
+        return "5.2";
+      default:
+        return NULL;
+    }
+  }
+}
+
 static void
 gst_h264_parse_update_src_caps (GstH264Parse * h264parse, GstCaps * caps)
 {
@@ -1546,17 +1670,18 @@ gst_h264_parse_update_src_caps (GstH264Parse * h264parse, GstCaps * caps)
 
     /* set profile and level in caps */
     if (sps) {
-      GstMapInfo map;
-      GstBuffer *sps_buf = h264parse->sps_nals[sps->id];
+      const gchar *profile, *level;
 
-      if (sps_buf) {
-        gst_buffer_map (sps_buf, &map, GST_MAP_READ);
-        gst_codec_utils_h264_caps_set_level_and_profile (caps,
-            map.data + 1, map.size - 1);
-        gst_buffer_unmap (sps_buf, &map);
-        /* relax the profile constraint to find a suitable decoder */
-        ensure_caps_profile (h264parse, caps, sps);
-      }
+      profile = get_profile_string (sps);
+      if (profile != NULL)
+        gst_caps_set_simple (caps, "profile", G_TYPE_STRING, profile, NULL);
+
+      level = get_level_string (sps);
+      if (level != NULL)
+        gst_caps_set_simple (caps, "level", G_TYPE_STRING, level, NULL);
+
+      /* relax the profile constraint to find a suitable decoder */
+      ensure_caps_profile (h264parse, caps, sps);
     }
 
     src_caps = gst_pad_get_current_caps (GST_BASE_PARSE_SRC_PAD (h264parse));
@@ -2072,7 +2197,7 @@ gst_h264_parse_set_caps (GstBaseParse * parse, GstCaps * caps)
 {
   GstH264Parse *h264parse;
   GstStructure *str;
-  const GValue *value;
+  const GValue *codec_data_value;
   GstBuffer *codec_data = NULL;
   gsize size;
   guint format, align, off;
@@ -2105,9 +2230,43 @@ gst_h264_parse_set_caps (GstBaseParse * parse, GstCaps * caps)
   /* get upstream format and align from caps */
   gst_h264_parse_format_from_caps (caps, &format, &align);
 
-  /* packetized video has a codec_data */
-  if (format != GST_H264_PARSE_FORMAT_BYTE &&
-      (value = gst_structure_get_value (str, "codec_data"))) {
+  codec_data_value = gst_structure_get_value (str, "codec_data");
+
+  /* fix up caps without stream-format for max. backwards compatibility */
+  if (format == GST_H264_PARSE_FORMAT_NONE) {
+    /* codec_data implies avc */
+    if (codec_data_value != NULL) {
+      GST_ERROR ("video/x-h264 caps with codec_data but no stream-format=avc");
+      format = GST_H264_PARSE_FORMAT_AVC;
+    } else {
+      /* otherwise assume bytestream input */
+      GST_ERROR ("video/x-h264 caps without codec_data or stream-format");
+      format = GST_H264_PARSE_FORMAT_BYTE;
+    }
+  }
+
+  /* avc caps sanity checks */
+  if (format == GST_H264_PARSE_FORMAT_AVC) {
+    /* AVC requires codec_data, AVC3 might have one and/or SPS/PPS inline */
+    if (codec_data_value == NULL)
+      goto avc_caps_codec_data_missing;
+
+    /* AVC implies alignment=au, everything else is not allowed */
+    if (align == GST_H264_PARSE_ALIGN_NONE)
+      align = GST_H264_PARSE_ALIGN_AU;
+    else if (align != GST_H264_PARSE_ALIGN_AU)
+      goto avc_caps_wrong_alignment;
+  }
+
+  /* bytestream caps sanity checks */
+  if (format == GST_H264_PARSE_FORMAT_BYTE) {
+    /* should have SPS/PSS in-band (and/or oob in streamheader field) */
+    if (codec_data_value != NULL)
+      goto bytestream_caps_with_codec_data;
+  }
+
+  /* packetized video has codec_data (required for AVC, optional for AVC3) */
+  if (codec_data_value != NULL) {
     GstMapInfo map;
     guint8 *data;
     guint num_sps, num_pps;
@@ -2120,9 +2279,13 @@ gst_h264_parse_set_caps (GstBaseParse * parse, GstCaps * caps)
     /* make note for optional split processing */
     h264parse->packetized = TRUE;
 
-    codec_data = gst_value_get_buffer (value);
+    /* codec_data field should hold a buffer */
+    if (!GST_VALUE_HOLDS_BUFFER (codec_data_value))
+      goto avc_caps_codec_data_wrong_type;
+
+    codec_data = gst_value_get_buffer (codec_data_value);
     if (!codec_data)
-      goto wrong_type;
+      goto avc_caps_codec_data_missing;
     gst_buffer_map (codec_data, &map, GST_MAP_READ);
     data = map.data;
     size = map.size;
@@ -2184,24 +2347,14 @@ gst_h264_parse_set_caps (GstBaseParse * parse, GstCaps * caps)
     gst_buffer_unmap (codec_data, &map);
 
     gst_buffer_replace (&h264parse->codec_data_in, codec_data);
-
-    /* if upstream sets codec_data without setting stream-format and alignment, we
-     * assume stream-format=avc,alignment=au */
-    if (format == GST_H264_PARSE_FORMAT_NONE)
-      format = GST_H264_PARSE_FORMAT_AVC;
-    if (align == GST_H264_PARSE_ALIGN_NONE)
-      align = GST_H264_PARSE_ALIGN_AU;
-  } else {
+  } else if (format == GST_H264_PARSE_FORMAT_BYTE) {
     GST_DEBUG_OBJECT (h264parse, "have bytestream h264");
     /* nothing to pre-process */
     h264parse->packetized = FALSE;
     /* we have 4 sync bytes */
     h264parse->nal_length_size = 4;
-
-    if (format == GST_H264_PARSE_FORMAT_NONE) {
-      format = GST_H264_PARSE_FORMAT_BYTE;
-      align = GST_H264_PARSE_ALIGN_AU;
-    }
+  } else {
+    /* probably AVC3 without codec_data field, anything to do here? */
   }
 
   {
@@ -2243,6 +2396,27 @@ gst_h264_parse_set_caps (GstBaseParse * parse, GstCaps * caps)
   return TRUE;
 
   /* ERRORS */
+avc_caps_codec_data_wrong_type:
+  {
+    GST_WARNING_OBJECT (parse, "H.264 AVC caps, codec_data field not a buffer");
+    goto refuse_caps;
+  }
+avc_caps_codec_data_missing:
+  {
+    GST_WARNING_OBJECT (parse, "H.264 AVC caps, but no codec_data");
+    goto refuse_caps;
+  }
+avc_caps_wrong_alignment:
+  {
+    GST_WARNING_OBJECT (parse, "H.264 AVC caps with NAL alignment, must be AU");
+    goto refuse_caps;
+  }
+bytestream_caps_with_codec_data:
+  {
+    GST_WARNING_OBJECT (parse, "H.264 bytestream caps with codec_data is not "
+        "expected, send SPS/PPS in-band with data or in streamheader field");
+    goto refuse_caps;
+  }
 avcc_too_small:
   {
     GST_DEBUG_OBJECT (h264parse, "avcC size %" G_GSIZE_FORMAT " < 8", size);
@@ -2251,11 +2425,6 @@ avcc_too_small:
 wrong_version:
   {
     GST_DEBUG_OBJECT (h264parse, "wrong avcC version");
-    goto refuse_caps;
-  }
-wrong_type:
-  {
-    GST_DEBUG_OBJECT (h264parse, "wrong codec-data type");
     goto refuse_caps;
   }
 refuse_caps:
