@@ -41,8 +41,7 @@ GST_DEBUG_CATEGORY (h264_parse_debug);
 enum
 {
   PROP_0,
-  PROP_CONFIG_INTERVAL,
-  PROP_LAST
+  PROP_CONFIG_INTERVAL
 };
 
 enum
@@ -361,7 +360,7 @@ gst_h264_parse_negotiate (GstH264Parse * h264parse, gint in_format,
   caps = gst_pad_get_allowed_caps (GST_BASE_PARSE_SRC_PAD (h264parse));
   GST_DEBUG_OBJECT (h264parse, "allowed caps: %" GST_PTR_FORMAT, caps);
 
-  /* concentrate on leading structure, since decodebin2 parser
+  /* concentrate on leading structure, since decodebin parser
    * capsfilter always includes parser template caps */
   if (caps) {
     caps = gst_caps_truncate (caps);
@@ -544,6 +543,16 @@ gst_h264_parse_process_sei (GstH264Parse * h264parse, GstH264NalUnit * nalu)
             sei.payload.recovery_point.exact_match_flag,
             sei.payload.recovery_point.broken_link_flag,
             sei.payload.recovery_point.changing_slice_group_idc);
+        break;
+
+        /* Additional messages that are not innerly useful to the
+         * element but for debugging purposes */
+      case GST_H264_SEI_STEREO_VIDEO_INFO:
+        GST_LOG_OBJECT (h264parse, "stereo video information message");
+        break;
+      case GST_H264_SEI_FRAME_PACKING:
+        GST_LOG_OBJECT (h264parse, "frame packing arrangement message: type %d",
+            sei.payload.frame_packing.frame_packing_type);
         break;
     }
   }
@@ -878,7 +887,6 @@ gst_h264_parse_handle_frame_packetized (GstBaseParse * parse,
     if (h264parse->split_packetized) {
       GST_ELEMENT_ERROR (h264parse, STREAM, FAILED, (NULL),
           ("invalid AVC input data"));
-      gst_buffer_unref (buffer);
 
       return GST_FLOW_ERROR;
     } else {
