@@ -1,7 +1,6 @@
-/*
- *  gstjpegparser.h - JPEG parser
- *
+/*  GStreamer JPEG parser
  *  Copyright (C) 2011-2012 Intel Corporation
+ *  Copyright (C) 2015 Tim-Philipp Müller <tim@centricular.com>
  *
  *  This library is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU Lesser General Public License
@@ -35,6 +34,8 @@ G_BEGIN_DECLS
  * GST_JPEG_MAX_FRAME_COMPONENTS:
  *
  * Maximum number of image components in a frame (Nf).
+ *
+ * Since: 1.6
  */
 #define GST_JPEG_MAX_FRAME_COMPONENTS   256
 
@@ -42,6 +43,8 @@ G_BEGIN_DECLS
  * GST_JPEG_MAX_SCAN_COMPONENTS:
  *
  * Maximum number of image components in a scan (Ns).
+ *
+ * Since: 1.6
  */
 #define GST_JPEG_MAX_SCAN_COMPONENTS    4
 
@@ -49,6 +52,8 @@ G_BEGIN_DECLS
  * GST_JPEG_MAX_QUANT_ELEMENTS:
  *
  * Number of elements in the quantization table.
+ *
+ * Since: 1.6
  */
 #define GST_JPEG_MAX_QUANT_ELEMENTS     64
 
@@ -60,13 +65,24 @@ typedef struct _GstJpegScanComponent    GstJpegScanComponent;
 typedef struct _GstJpegScanHdr          GstJpegScanHdr;
 typedef struct _GstJpegFrameComponent   GstJpegFrameComponent;
 typedef struct _GstJpegFrameHdr         GstJpegFrameHdr;
-typedef struct _GstJpegMarkerSegment    GstJpegMarkerSegment;
+typedef struct _GstJpegSegment          GstJpegSegment;
 
 /**
- * GstJpegMarkerCode:
- * @GST_JPEG_MARKER_SOF_MIN: Start of frame min marker code
- * @GST_JPEG_MARKER_SOF_MAX: Start of frame max marker code
- * @GST_JPEG_MARKER_DHT: Huffman tabler marker code
+ * GstJpegMarker:
+ * @GST_JPEG_MARKER_SOF0: Start of frame marker code (Baseline)
+ * @GST_JPEG_MARKER_SOF1: Start of frame marker code (Extended Sequential, Huffman)
+ * @GST_JPEG_MARKER_SOF2: Start of frame marker code (Progressive, Huffman)
+ * @GST_JPEG_MARKER_SOF3: Start of frame marker code (Lossless, Huffman)
+ * @GST_JPEG_MARKER_SOF5: Start of frame marker code (Differential Sequential, Huffman)
+ * @GST_JPEG_MARKER_SOF6: Start of frame marker code (Differential Progressive, Huffman)
+ * @GST_JPEG_MARKER_SOF7: Start of frame marker code (Differential Lossless, Huffman)
+ * @GST_JPEG_MARKER_SOF9: Start of frame marker code (Extended Sequential, Arithmetic)
+ * @GST_JPEG_MARKER_SOF10: Start of frame marker code (Progressive, Arithmetic)
+ * @GST_JPEG_MARKER_SOF11: Start of frame marker code (Lossless, Arithmetic)
+ * @GST_JPEG_MARKER_SOF13: Start of frame marker code (Differential Sequential, Arithmetic)
+ * @GST_JPEG_MARKER_SOF14: Start of frame marker code (Differential Progressive, Arithmetic)
+ * @GST_JPEG_MARKER_SOF15: Start of frame marker code (Differential Lossless, Arithmetic)
+ * @GST_JPEG_MARKER_DHT: Huffman table marker code
  * @GST_JPEG_MARKER_DAC: Arithmetic coding marker code
  * @GST_JPEG_MARKER_RST_MIN: Restart interval min marker code
  * @GST_JPEG_MARKER_RST_MAX: Restart interval max marker code
@@ -76,29 +92,88 @@ typedef struct _GstJpegMarkerSegment    GstJpegMarkerSegment;
  * @GST_JPEG_MARKER_DQT: Define quantization table marker code
  * @GST_JPEG_MARKER_DNL: Define number of lines marker code
  * @GST_JPEG_MARKER_DRI: Define restart interval marker code
- * @GST_JPEG_MARKER_APP_MIN: Application segment min marker code
- * @GST_JPEG_MARKER_APP_MAX: Application segment max marker code
+ * @GST_JPEG_MARKER_APP0: Application segment 0 marker code
+ * @GST_JPEG_MARKER_APP1: Application segment 1 marker code
+ * @GST_JPEG_MARKER_APP2: Application segment 2 marker code
+ * @GST_JPEG_MARKER_APP3: Application segment 3 marker code
+ * @GST_JPEG_MARKER_APP4: Application segment 4 marker code
+ * @GST_JPEG_MARKER_APP5: Application segment 5 marker code
+ * @GST_JPEG_MARKER_APP6: Application segment 6 marker code
+ * @GST_JPEG_MARKER_APP7: Application segment 7 marker code
+ * @GST_JPEG_MARKER_APP8: Application segment 8 marker code
+ * @GST_JPEG_MARKER_APP9: Application segment 9 marker code
+ * @GST_JPEG_MARKER_APP10: Application segment 10 marker code
+ * @GST_JPEG_MARKER_APP11: Application segment 11 marker code
+ * @GST_JPEG_MARKER_APP12: Application segment 12 marker code
+ * @GST_JPEG_MARKER_APP13: Application segment 13 marker code
+ * @GST_JPEG_MARKER_APP14: Application segment 14 marker code
+ * @GST_JPEG_MARKER_APP15: Application segment 15 marker code
  * @GST_JPEG_MARKER_COM: Comment marker code
  *
  * Indicates the type of JPEG segment.
+ *
+ * Since: 1.6
  */
 typedef enum {
-  GST_JPEG_MARKER_SOF_MIN       = 0xC0,
-  GST_JPEG_MARKER_SOF_MAX       = 0xCF,
+  GST_JPEG_MARKER_SOF0          = 0xC0,
+  GST_JPEG_MARKER_SOF1          = 0xC1,
+  GST_JPEG_MARKER_SOF2          = 0xC2,
+  GST_JPEG_MARKER_SOF3          = 0xC3,
+  /* 0xC4 = DHT see below */
+  GST_JPEG_MARKER_SOF5          = 0xC5,
+  GST_JPEG_MARKER_SOF6          = 0xC6,
+  GST_JPEG_MARKER_SOF7          = 0xC7,
+  /* 0xC8 = reserved */
+  GST_JPEG_MARKER_SOF9          = 0xC9,
+  GST_JPEG_MARKER_SOF10         = 0xCA,
+  GST_JPEG_MARKER_SOF11         = 0xCB,
+  /* 0xCC = DAC see below */
+  GST_JPEG_MARKER_SOF13         = 0xCD,
+  GST_JPEG_MARKER_SOF14         = 0xCE,
+  GST_JPEG_MARKER_SOF15         = 0xCF,
   GST_JPEG_MARKER_DHT           = 0xC4,
   GST_JPEG_MARKER_DAC           = 0xCC,
-  GST_JPEG_MARKER_RST_MIN       = 0xD0,
-  GST_JPEG_MARKER_RST_MAX       = 0xD7,
+  GST_JPEG_MARKER_RST0          = 0xD0,
+  GST_JPEG_MARKER_RST1          = 0xD1,
+  GST_JPEG_MARKER_RST2          = 0xD2,
+  GST_JPEG_MARKER_RST3          = 0xD3,
+  GST_JPEG_MARKER_RST4          = 0xD4,
+  GST_JPEG_MARKER_RST5          = 0xD5,
+  GST_JPEG_MARKER_RST6          = 0xD6,
+  GST_JPEG_MARKER_RST7          = 0xD7,
   GST_JPEG_MARKER_SOI           = 0xD8,
   GST_JPEG_MARKER_EOI           = 0xD9,
   GST_JPEG_MARKER_SOS           = 0xDA,
   GST_JPEG_MARKER_DQT           = 0xDB,
   GST_JPEG_MARKER_DNL           = 0xDC,
   GST_JPEG_MARKER_DRI           = 0xDD,
-  GST_JPEG_MARKER_APP_MIN       = 0xE0,
-  GST_JPEG_MARKER_APP_MAX       = 0xEF,
+  GST_JPEG_MARKER_APP0          = 0xE0,
+  GST_JPEG_MARKER_APP1          = 0xE1,
+  GST_JPEG_MARKER_APP2          = 0xE2,
+  GST_JPEG_MARKER_APP3          = 0xE3,
+  GST_JPEG_MARKER_APP4          = 0xE4,
+  GST_JPEG_MARKER_APP5          = 0xE5,
+  GST_JPEG_MARKER_APP6          = 0xE6,
+  GST_JPEG_MARKER_APP7          = 0xE7,
+  GST_JPEG_MARKER_APP8          = 0xE8,
+  GST_JPEG_MARKER_APP9          = 0xE9,
+  GST_JPEG_MARKER_APP10         = 0xEA,
+  GST_JPEG_MARKER_APP11         = 0xEB,
+  GST_JPEG_MARKER_APP12         = 0xEC,
+  GST_JPEG_MARKER_APP13         = 0xED,
+  GST_JPEG_MARKER_APP14         = 0xEE,
+  GST_JPEG_MARKER_APP15         = 0xEF,
   GST_JPEG_MARKER_COM           = 0xFE,
-} GstJpegMarkerCode;
+} GstJpegMarker;
+
+#define GST_JPEG_MARKER_SOF_MIN GST_JPEG_MARKER_SOF0
+#define GST_JPEG_MARKER_SOF_MAX GST_JPEG_MARKER_SOF15
+
+#define GST_JPEG_MARKER_APP_MIN GST_JPEG_MARKER_APP0
+#define GST_JPEG_MARKER_APP_MAX GST_JPEG_MARKER_APP15
+
+#define GST_JPEG_MARKER_RST_MIN GST_JPEG_MARKER_RST0
+#define GST_JPEG_MARKER_RST_MAX GST_JPEG_MARKER_RST7
 
 /**
  * GstJpegProfile:
@@ -108,6 +183,8 @@ typedef enum {
  * @GST_JPEG_PROFILE_LOSSLESS: Lossless (sequential)
  *
  * JPEG encoding processes.
+ *
+ * Since: 1.6
  */
 typedef enum {
   GST_JPEG_PROFILE_BASELINE     = 0x00,
@@ -122,6 +199,8 @@ typedef enum {
  * @GST_JPEG_ENTROPY_CODING_ARITHMETIC: arithmetic coding
  *
  * JPEG entropy coding mode.
+ *
+ * Since: 1.6
  */
 typedef enum {
   GST_JPEG_ENTROPY_CODING_HUFFMAN       = 0x00,
@@ -136,6 +215,8 @@ typedef enum {
  *   already been parsed
  *
  * Quantization table.
+ *
+ * Since: 1.6
  */
 struct _GstJpegQuantTable
 {
@@ -150,6 +231,8 @@ struct _GstJpegQuantTable
  *
  * Helper data structure that holds all quantization tables used to
  * decode an image.
+ *
+ * Since: 1.6
  */
 struct _GstJpegQuantTables
 {
@@ -164,6 +247,8 @@ struct _GstJpegQuantTables
  *   been parsed
  *
  * Huffman table.
+ *
+ * Since: 1.6
  */
 struct _GstJpegHuffmanTable
 {
@@ -179,6 +264,8 @@ struct _GstJpegHuffmanTable
  *
  * Helper data structure that holds all AC/DC Huffman tables used to
  * decode an image.
+ *
+ * Since: 1.6
  */
 struct _GstJpegHuffmanTables
 {
@@ -193,6 +280,8 @@ struct _GstJpegHuffmanTables
  * @ac_selector: AC entropy coding table destination selector (Taj)
 
  * Component-specification parameters.
+ *
+ * Since: 1.6
  */
 struct _GstJpegScanComponent
 {
@@ -207,11 +296,19 @@ struct _GstJpegScanComponent
  * @components: Image components
  *
  * Scan header.
+ *
+ * Since: 1.6
  */
 struct _GstJpegScanHdr
 {
   guint8 num_components;                /* 1 .. 4       */
   GstJpegScanComponent components[GST_JPEG_MAX_SCAN_COMPONENTS];
+
+  /*< private >*/
+  guint8 _reserved1; /* Ss */
+  guint8 _reserved2; /* Se */
+  guint8 _reserved3; /* Al */
+  guint8 _reserved4; /* Ah */
 };
 
 /**
@@ -222,6 +319,8 @@ struct _GstJpegScanHdr
  * @quant_table_selector: Quantization table destination selector (Tqi)
  *
  * Component-specification parameters.
+ *
+ * Since: 1.6
  */
 struct _GstJpegFrameComponent
 {
@@ -241,6 +340,8 @@ struct _GstJpegFrameComponent
  * @restart_interval: Number of MCU in the restart interval (Ri)
  *
  * Frame header.
+ *
+ * Since: 1.6
  */
 struct _GstJpegFrameHdr
 {
@@ -252,162 +353,50 @@ struct _GstJpegFrameHdr
 };
 
 /**
- * GstJpegMarkerSegment:
- * @type: The type of the segment that starts at @offset
+ * GstJpegSegment:
+ * @marker: The type of the segment that starts at @offset
+ * @data: the data containing the jpeg segment starting at @offset
  * @offset: The offset to the segment start in bytes. This is the
  *   exact start of the segment, no marker code included
- * @size: The size in bytes of the segment, or -1 if the end was not
- *   found. It is the exact size of the segment, no marker code included
+ * @size: The size of the segment in bytes, or -1 if the end was not
+ *   found. It is the exact size of the segment, without the sync byte and
+ *   marker code but including any length bytes.
  *
  * A structure that contains the type of a segment, its offset and its size.
+ *
+ * Since: 1.6
  */
-struct _GstJpegMarkerSegment
+struct _GstJpegSegment
 {
-  guint8 marker;
+  GstJpegMarker marker;
+  const guint8 *data;
   guint offset;
-  gint size;
+  gssize size;
 };
 
-/**
- * gst_jpeg_scan_for_marker_code:
- * @data: The data to parse
- * @size: The size of @data
- * @offset: The offset from which to start parsing
- *
- * Scans the JPEG bitstream contained in @data for the next marker
- * code. If found, the function returns an offset to the marker code,
- * including the 0xff prefix code but excluding any extra fill bytes.
- *
- * Returns: offset to the marker code if found, or -1 if not found.
- */
-gint            gst_jpeg_scan_for_marker_code   (const guint8 * data,
-                                                 gsize size,
-                                                 guint offset);
+gboolean  gst_jpeg_parse (GstJpegSegment * seg,
+                          const guint8   * data,
+                          gsize            size,
+                          guint            offset);
 
-/**
- * gst_jpeg_parse:
- * @data: The data to parse
- * @size: The size of @data
- * @offset: The offset from which to start parsing
- *
- * Parses the JPEG bitstream contained in @data, and returns the
- * detected segment as a #GstJpegMarkerSegment.
- *
- * Returns: TRUE if a packet start code was found.
- */
-gboolean        gst_jpeg_parse                  (GstJpegMarkerSegment * seg,
-                                                 const guint8 * data,
-                                                 gsize size,
-                                                 guint offset);
+gboolean  gst_jpeg_segment_parse_frame_header  (const GstJpegSegment  * segment,
+                                                GstJpegFrameHdr       * frame_hdr);
 
-/**
- * gst_jpeg_parse_frame_hdr:
- * @hdr: (out): The #GstJpegFrameHdr structure to fill in
- * @data: The data from which to parse the frame header
- * @size: The size of @data
- * @offset: The offset in bytes from which to start parsing @data
- *
- * Parses the @hdr JPEG frame header structure members from @data.
- *
- * Returns: TRUE if the frame header was correctly parsed.
- */
-gboolean        gst_jpeg_parse_frame_hdr        (GstJpegFrameHdr * hdr,
-                                                 const guint8 * data,
-                                                 gsize size,
-                                                 guint offset);
+gboolean  gst_jpeg_segment_parse_scan_header   (const GstJpegSegment * segment,
+                                                GstJpegScanHdr       * scan_hdr);
 
-/**
- * gst_jpeg_parse_scan_hdr:
- * @hdr: (out): The #GstJpegScanHdr structure to fill in
- * @data: The data from which to parse the scan header
- * @size: The size of @data
- * @offset: The offset in bytes from which to start parsing @data
- *
- * Parses the @hdr JPEG scan header structure members from @data.
- *
- * Returns: TRUE if the scan header was correctly parsed
- */
-gboolean        gst_jpeg_parse_scan_hdr         (GstJpegScanHdr * hdr,
-                                                 const guint8 * data,
-                                                 gsize size,
-                                                 guint offset);
+gboolean  gst_jpeg_segment_parse_huffman_table (const GstJpegSegment * segment,
+                                                GstJpegHuffmanTables * huff_tables);
 
-/**
- * gst_jpeg_parse_quantization_table:
- * @quant_tables: (out): The #GstJpegQuantizationTable structure to fill in
- * @num_quant_tables: The number of allocated quantization tables in @quant_tables
- * @data: The data from which to parse the quantization table
- * @size: The size of @data
- * @offset: The offset in bytes from which to start parsing @data
- *
- * Parses the JPEG quantization table structure members from @data.
- *
- * Note: @quant_tables represents the complete set of possible
- * quantization tables. However, the parser will only write to the
- * quantization table specified by the table destination identifier
- * (Tq). While doing so, the @valid flag of the specified quantization
- * table will also be set to %TRUE.
- *
- * Returns: TRUE if the quantization table was correctly parsed.
- */
-gboolean        gst_jpeg_parse_quant_table      (GstJpegQuantTables *quant_tables,
-                                                 const guint8 * data,
-                                                 gsize size,
-                                                 guint offset);
+gboolean  gst_jpeg_segment_parse_restart_interval (const GstJpegSegment * segment,
+                                                   guint                * interval);
 
-/**
- * gst_jpeg_parse_huffman_table:
- * @huf_tables: (out): The #GstJpegHuffmanTable structure to fill in
- * @data: The data from which to parse the Huffman table
- * @size: The size of @data
- * @offset: The offset in bytes from which to start parsing @data
- *
- * Parses the JPEG Huffman table structure members from @data.
- *
- * Note: @huf_tables represents the complete set of possible Huffman
- * tables. However, the parser will only write to the Huffman table
- * specified by the table destination identifier (Th). While doing so,
- * the @valid flag of the specified Huffman table will also be set to
- * %TRUE;
- *
- * Returns: TRUE if the Huffman table was correctly parsed.
- */
-gboolean        gst_jpeg_parse_huffman_table    (GstJpegHuffmanTables *huf_tables,
-                                                 const guint8 * data,
-                                                 gsize size,
-                                                 guint offset);
+gboolean  gst_jpeg_segment_parse_quantization_table (const GstJpegSegment * segment,
+                                                     GstJpegQuantTables   * quant_tables);
 
-/**
- * gst_jpeg_parse_restart_interval:
- * @interval: (out): The parsed restart interval value
- * @data: The data from which to parse the restart interval specification
- * @size: The size of @data
- * @offset: The offset in bytes from which to start parsing @data
- *
- * Returns: TRUE if the restart interval value was correctly parsed.
- */
-gboolean        gst_jpeg_parse_restart_interval (guint * interval,
-                                                 const guint8 * data,
-                                                 gsize size,
-                                                 guint offset);
+void      gst_jpeg_get_default_quantization_tables (GstJpegQuantTables * quant_tables);
 
-/**
- * gst_jpeg_get_default_huffman_tables:
- * @huf_tables: (out): The default DC/AC Huffman tables to fill in
- *
- * Fills in @huf_tables with the default AC/DC Huffman tables, as
- * specified by the JPEG standard.
- */
-void gst_jpeg_get_default_huffman_tables (GstJpegHuffmanTables *huf_tables);
-
-/**
- * gst_jpeg_get_default_quantization_table:
- * @quant_tables: (out): The default luma/chroma quant-tables in zigzag mode
- *
- * Fills in @quant_tables with the default quantization tables, as
- * specified by the JPEG standard.
- */
-void gst_jpeg_get_default_quantization_tables (GstJpegQuantTables *quant_tables);
+void      gst_jpeg_get_default_huffman_tables (GstJpegHuffmanTables * huff_tables);
 
 G_END_DECLS
 
