@@ -4,12 +4,9 @@ libgstcodecparsers_@GST_API_VERSION@_la_SOURCES = \
 	gstmpegvideoparser.c gsth264parser.c gstvc1parser.c gstmpeg4parser.c \
 	gsth265parser.c gstvp8parser.c gstvp8rangedecoder.c \
 	parserutils.c nalutils.c dboolhuff.c vp8utils.c \
-<<<<<<< HEAD
-	$(NULL)
-=======
 	gstjpegparser.c \
-	gstmpegvideometa.c
->>>>>>> 7e7b4d6... codecparsers: jpeg: add JPEG bitstream parser
+	gstmpegvideometa.c \
+	$(NULL)
 
 libgstcodecparsers_@GST_API_VERSION@includedir = \
 	$(includedir)/gstreamer-@GST_API_VERSION@/gst/codecparsers
@@ -18,14 +15,11 @@ noinst_HEADERS = parserutils.h nalutils.h dboolhuff.h vp8utils.h
 
 libgstcodecparsers_@GST_API_VERSION@include_HEADERS = \
 	gstmpegvideoparser.h gsth264parser.h gstvc1parser.h gstmpeg4parser.h \
-<<<<<<< HEAD
 	gsth265parser.h \
-	$(NULL)
-=======
 	gsth265parser.h gstvp8parser.h gstvp8rangedecoder.h \
 	gstjpegparser.h \
-	gstmpegvideometa.h
->>>>>>> 7e7b4d6... codecparsers: jpeg: add JPEG bitstream parser
+	gstmpegvideometa.h \
+	$(NULL)
 
 libgstcodecparsers_@GST_API_VERSION@_la_CFLAGS = \
 	-I$(top_builddir)/gst-libs \
