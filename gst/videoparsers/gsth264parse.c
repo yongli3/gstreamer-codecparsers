@@ -492,13 +492,18 @@ static const gchar *nal_names[] = {
   "Filler Data",
   "SPS extension",
   "Prefix",
-  "SPS Subset"
+  "SPS Subset",
+  "Depth Parameter Set",
+  "Reserved", "Reserved",
+  "Slice Aux Unpartitioned",
+  "Slice Extension",
+  "Slice Depth/3D-AVC Extension"
 };
 
 static const gchar *
 _nal_name (GstH264NalUnitType nal_type)
 {
-  if (nal_type <= GST_H264_NAL_SUBSET_SPS)
+  if (nal_type <= GST_H264_NAL_SLICE_DEPTH)
     return nal_names[nal_type];
   return "Invalid";
 }
@@ -855,6 +860,12 @@ gst_h264_parse_process_nal (GstH264Parse * h264parse, GstH264NalUnit * nalu)
         GST_DEBUG_OBJECT (h264parse, "moved IDR mark to SEI position %d",
             h264parse->idr_pos);
       }
+      break;
+    case GST_H264_NAL_AU_DELIMITER:
+      /* Just accumulate AU Delimiter, whether it's before SPS or not */
+      pres = gst_h264_parser_parse_nal (nalparser, nalu);
+      if (pres != GST_H264_PARSER_OK)
+        return FALSE;
       break;
     default:
       /* drop anything before the initial SPS */
