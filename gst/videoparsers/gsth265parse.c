@@ -37,8 +37,7 @@ GST_DEBUG_CATEGORY (h265_parse_debug);
 enum
 {
   PROP_0,
-  PROP_CONFIG_INTERVAL,
-  PROP_LAST
+  PROP_CONFIG_INTERVAL
 };
 
 enum
@@ -322,7 +321,7 @@ gst_h265_parse_negotiate (GstH265Parse * h265parse, gint in_format,
   caps = gst_pad_get_allowed_caps (GST_BASE_PARSE_SRC_PAD (h265parse));
   GST_DEBUG_OBJECT (h265parse, "allowed caps: %" GST_PTR_FORMAT, caps);
 
-  /* concentrate on leading structure, since decodebin2 parser
+  /* concentrate on leading structure, since decodebin parser
    * capsfilter always includes parser template caps */
   if (caps) {
     caps = gst_caps_truncate (caps);
@@ -339,7 +338,8 @@ gst_h265_parse_negotiate (GstH265Parse * h265parse, gint in_format,
     }
   }
 
-  if (caps) {
+  /* FIXME We could fail the negotiation immediatly if caps are empty */
+  if (caps && !gst_caps_is_empty (caps)) {
     /* fixate to avoid ambiguity with lists when parsing */
     caps = gst_caps_fixate (caps);
     gst_h265_parse_format_from_caps (caps, &format, &align);
