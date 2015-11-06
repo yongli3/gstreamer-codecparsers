@@ -101,24 +101,52 @@ typedef enum {
   GST_VP9_PROFILE_UNDEFINED
 } GstVP9Profile;
 
+/**
+ * GstVp9FrameType:
+ * @GST_VP9_KEY_FRAME: Key frame, only have intra blocks
+ * @GST_VP9_INTER_FRAME: Inter frame, both intra and inter blocks
+ *
+ * VP9 frame types
+ */
 typedef enum {
   GST_VP9_KEY_FRAME   = 0,
   GST_VP9_INTER_FRAME = 1
 } GstVp9FrameType;
 
+/**
+ * GstVp9BitDepth:
+ * @GST_VP9_BIT_DEPTH_8: Bit depth is 8
+ * @GST_VP9_BIT_DEPTH_10 Bit depth is 10
+ * @GST_VP9_BIT_DEPTH_12:Bit depth is 12
+ *
+ * Bit depths of encoded frames
+ */
 typedef enum {
   GST_VP9_BIT_DEPTH_8  = 8,
   GST_VP9_BIT_DEPTH_10 = 10,
   GST_VP9_BIT_DEPTH_12 = 12
 } GstVp9BitDepth;
 
+/**
+ * GstVp9ColorSpace:
+ * @GST_VP9_CS_UNKNOWN: Unknown color space
+ * @GST_VP9_CS_BT_601: BT.601
+ * @GST_VP9_CS_BT_709: BT.709
+ * @GST_VP9_CS_SMPTE_170: SMPTE.170
+ * @GST_VP9_CS_SMPTE_240: SMPTE.240
+ * @GST_VP9_CS_BT_2020: BT.2020
+ * @GST_VP9_CS_RESERVED: Reserved
+ * @GST_VP9_CS_SRGB: sRGB 
+ *
+ * Supported ColorSpace standards
+ */
 typedef enum {
   GST_VP9_CS_UNKNOWN               = 0,
   GST_VP9_CS_BT_601                = 1,
   GST_VP9_CS_BT_709                = 2,
   GST_VP9_CS_SMPTE_170             = 3,
   GST_VP9_CS_SMPTE_240             = 4,
-  GST_VP9_CS_RESERVED_1            = 5,
+  GST_VP9_CS_BT_2020               = 5,
   GST_VP9_CS_RESERVED_2            = 6,
   GST_VP9_CS_SRGB                  = 7
 } GstVp9ColorSpace;
@@ -135,6 +163,16 @@ typedef enum {
   GST_VP9_CR_FULL
 } GstVp9ColorRange;
 
+/**
+ * GstVp9InterpFilter:
+ * @GST_VP9_INTERP_FILTER_EIGHTTAP: EightTap interpolation filter
+ * @GST_VP9_INTERP_FILTER_EIGHTTAP_SMOOTH: Smooth interpolation filter
+ * @GST_VP9_INTERP_FILTER_EIGHTTAP_SHARP: Shart interpolation filter
+ * @GST_VP9_INTERP_FILTER_BILINEAR: Bilinear interpolation filter
+ * @GST_VP9_INTERP_FILTER_SWITCHABLE: Selectable interpolation filter
+ *
+ * Interpolation Filters Types
+ */
 typedef enum {
   GST_VP9_INTERP_FILTER_EIGHTTAP        = 0,
   GST_VP9_INTERP_FILTER_EIGHTTAP_SMOOTH = 1,
@@ -143,6 +181,16 @@ typedef enum {
   GST_VP9_INTERP_FILTER_SWITCHABLE      = 4
 } GstVp9InterpFilter;
 
+/**
+ * GstVp9RefFrameType:
+ * @GST_VP9_REF_FRAME_INTRA: Intra reference frame
+ * @GST_VP9_REF_FRAME_LAST: Last Reference frame
+ * @GST_VP9_REF_FRAME_GOLDEN: Golden Reference frame
+ * @GST_VP9_REF_FRAME_ALTREF: Alternate Reference frame
+ * @GST_VP9_REF_FRAME_MAX: 
+ *
+ * Reference Frame types
+ */
 typedef enum {
   GST_VP9_REF_FRAME_INTRA  = 0,
   GST_VP9_REF_FRAME_LAST   = 1,
@@ -175,6 +223,22 @@ struct _GstVp9QuantIndices
   gint8 uv_ac_delta;
 };
 
+/**
+ * GstVp9MbLoofFilter:
+ * @filter_level: indicates loop filter level for the current frame
+ * @sharpness_level: indicates sharpness level for thecurrent frame
+ * @mode_ref_delta_enabled: indicate if filter adjust is on
+ * @mode_ref_delta_update: indicates if the delta values used in an
+ *   adjustment are updated in the current frame
+ * @update_ref_deltas: indicate which ref deltas are updated
+ * @ref_deltas:  Loop filter strength adjustments based on
+ *  frame type (intra, inter)
+ * @update_mode_deltas: indicate with mode deltas are updated
+ * @mode_deltas: Loop filter strength adjustments based on
+ *   mode (zero, new mv)
+ *
+ *  Loop filter values
+ */
 struct _GstVp9LoopFilter {
   gboolean filter_level;
   gboolean sharpness_level;
@@ -187,6 +251,20 @@ struct _GstVp9LoopFilter {
   gint8 mode_deltas[GST_VP9_MAX_MODE_LF_DELTAS];
 };
 
+/**
+* GstVp9SegmentationInfoData:
+* @alternate_quantizer_enabled: indicate alternate quantizer enabled at segment level
+* @alternate_quantizer: alternate quantizer value
+* @alternate_loop_filter_enabled: indicate alternate loop filter enabled at segment level
+* @alternate_loop_filter: alternate loop filter
+* @reference_frame_enabled: indicate alternate reference frame at segment level
+* @reference_frame: alternate reference frame
+* @reference_skip: a block skip mode that implies both the use of a (0,0)
+*   motion vector and that no residual will be coded.
+*
+* Segemtnation info for each segment
+*
+*/
 struct _GstVp9SegmentationInfoData {
   /* SEG_LVL_ALT_Q */
   gboolean alternate_quantizer_enabled;
@@ -203,6 +281,22 @@ struct _GstVp9SegmentationInfoData {
   gboolean reference_skip;
 };
 
+/**
+ * GstVp9SegmentationInfo:
+ * @enabled:  enables the segmentation feature for the current frame
+ * @update_map: determines if segmentation is updated in the current frame
+ * @update_tree_probs: determines if tree probabilities updated or not
+ * @tree_probs: segment tree probabilities
+ * @update_pred_probs:determines if prediction probabilities updated or not
+ * @pred_probs: prediction probabilities
+ * @abs_delta: interpretation of segment data values
+ * @temporal_update: type of map update
+ * @update_data: indicates if the segment feature data
+ *   is updated in the current frame
+ * @data: segment feature data
+ *
+ * Segmentation info
+ */
 struct _GstVp9SegmentationInfo {
   /* enable in setup_segmentation*/
   gboolean  enabled;
@@ -225,6 +319,44 @@ struct _GstVp9SegmentationInfo {
   GstVp9SegmentationInfoData data[GST_VP9_MAX_SEGMENTS];
 };
 
+/**
+ * GstVp9FrameHdr:
+ * @profile: encoded profile
+ * @show_existing_frame: display already decoded frame instead of doing the decoding
+ * @frame_to_show: which frame to show if show_existing_frame is true
+ * @frame_type: frame type
+ * @show_frame: indicate whether is it displayable frame or not
+ * @error_resilient_mode: error  resilent mode
+ * @subsampling_x: horizontal subsampling
+ * @subsampling_y: vertical subsampling
+ * @width: frame width
+ * @height: frame height
+ * @display_size_enabled: display size enabled (cropping)
+ * @display_width: display width
+ * @display_height: display height
+ * @frame_context_idx: frame context index
+ * @bit_depth: bit depth of the stream
+ * @color_space: color space standard
+ * @color_range: color range standard
+ * @intra_only: intra only frame
+ * @reset_frame_context: reset frame context
+ * @refresh_frame_flags: refresh reference frame flags
+ * @ref_frame_indices: reference frame index
+ * @ref_frame_sign_bias: sign bias for selecting altref,last and golden frames
+ * @allow_high_precision_mv: allow hight precision motion vector
+ * @mcomp_filter_type: interpolation filter type
+ * @refresh_frame_context: refresh frame context indicator
+ * @frame_parallel_decoding_mode: enable or disable parallel decoding support.
+ * @loopfilter: loopfilter values
+ * @quant_indices: quantization indeces
+ * @segmentation: segmentation info
+ * @log2_tile_rows: tile row indicator
+ * @log2_tile_columns:  tile column indicator
+ * @first_partition_size: first partition size (after the uncompressed header)
+ * @frame_header_length_in_bytes: length of uncompressed header
+ *
+ * Frame header
+ */
 struct _GstVp9FrameHdr
 {
   guint profile;
@@ -270,6 +402,20 @@ struct _GstVp9FrameHdr
   guint32 frame_header_length_in_bytes;
 };
 
+/**
+ * GstVp9Segmentation:
+ * @filter_level: loop filter level
+ * @luma_ac_quant_scale: AC quant scale for luma(Y) component
+ * @luma_dc_quant_scale: DC quant scale for luma(Y) component
+ * @chroma_ac_quant_scale AC quant scale for chroma(U/V) component
+ * @chroma_dc_quant_scale: DC quant scale for chroma (U/V) component
+ * @reference_frame_enabled: alternate reference frame enablement
+ * @reference_frame: alternate reference frame
+ * @reference_skip:  a block skip mode that implies both the use of a (0,0)
+ *   motion vector and that no residual will be coded
+ *
+ * Segmentation info kept across multipe frames
+ */
 struct _GstVp9Segmentation
 {
   guint8 filter_level[4][2];
@@ -284,6 +430,16 @@ struct _GstVp9Segmentation
   gboolean reference_skip;
 };
 
+/**
+ * GstVp9Parser:
+ * @priv: GstVp9ParserPrivate struct to keep track of state variables
+ * @lossless_flag: lossless mode decode
+ * @mb_segment_tree_probs: decoding tree probabilities
+ * @segment_pred_probs: segement prediction probabiilties
+ * @segmentation: Segemenation info
+ *
+ * Parser context that needs to be live across frames
+ */
 struct _GstVp9Parser
 {
   /* private stuct for tracking state variables across frames */
