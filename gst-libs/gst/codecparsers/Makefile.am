@@ -6,6 +6,7 @@ libgstcodecparsers_@GST_API_VERSION@_la_SOURCES = \
 	parserutils.c nalutils.c dboolhuff.c vp8utils.c \
 	gstjpegparser.c \
 	gstmpegvideometa.c \
+	gstvp9parser.c vp9utils.c \
 	$(NULL)
 
 libgstcodecparsers_@GST_API_VERSION@includedir = \
@@ -17,7 +18,8 @@ libgstcodecparsers_@GST_API_VERSION@include_HEADERS = \
 	gstmpegvideoparser.h gsth264parser.h gstvc1parser.h gstmpeg4parser.h \
 	gsth265parser.h gstvp8parser.h gstvp8rangedecoder.h \
 	gstjpegparser.h \
-	gstmpegvideometa.h
+	gstmpegvideometa.h \
+	gstvp9parser.h vp9utils.h \
 	$(NULL)
 
 libgstcodecparsers_@GST_API_VERSION@_la_CFLAGS = \
@@ -39,7 +41,8 @@ libgstcodecparsers_@GST_API_VERSION@_la_LDFLAGS = \
 	$(GST_ALL_LDFLAGS) \
 	$(GST_LT_LDFLAGS)
 
-EXTRA_DIST = dboolhuff.LICENSE dboolhuff.PATENTS dboolhuff.AUTHORS
+EXTRA_DIST = dboolhuff.LICENSE dboolhuff.PATENTS dboolhuff.AUTHORS \
+             vp9utils.LICENSE vp9utils.PATENTS vp9utils.AUTHORS
 
 Android.mk:  $(BUILT_SOURCES) Makefile.am
 	androgenizer -:PROJECT libgstcodecparsers -:STATIC libgstcodecparsers-@GST_API_VERSION@ \
