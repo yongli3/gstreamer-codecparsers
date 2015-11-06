@@ -645,11 +645,13 @@ void
 gst_vp9_parser_free (GstVp9Parser * parser)
 {
   if (parser) {
-    if (parser->priv)
-      g_free (parser->priv);
-    g_free (parser);
+    if (parser->priv) {
+      g_slice_free (GstVp9ParserPrivate, parser->priv);
+      parser->priv = NULL;
+    }
+    g_slice_free (GstVp9Parser, parser);
+    parser = NULL;
   }
-  parser = NULL;
 }
 
 /**
