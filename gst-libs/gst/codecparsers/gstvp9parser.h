@@ -304,10 +304,10 @@ struct _GstVp9SegmentationInfo {
   gboolean update_map;
   /* tree_probs exist or not*/
   gboolean update_tree_probs[GST_VP9_SEG_TREE_PROBS];
-  gboolean tree_probs[GST_VP9_SEG_TREE_PROBS];
+  guint8 tree_probs[GST_VP9_SEG_TREE_PROBS];
   /* pred_probs exist or not*/
   gboolean update_pred_probs[GST_VP9_PREDICTION_PROBS];
-  gboolean pred_probs[GST_VP9_PREDICTION_PROBS];
+  guint8 pred_probs[GST_VP9_PREDICTION_PROBS];
 
   /* abs_delta in setup_segmentation */
   gboolean abs_delta;
