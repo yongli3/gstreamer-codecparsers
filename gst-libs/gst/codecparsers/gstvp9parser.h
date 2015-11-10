@@ -240,14 +240,14 @@ struct _GstVp9QuantIndices
  *  Loop filter values
  */
 struct _GstVp9LoopFilter {
-  gboolean filter_level;
-  gboolean sharpness_level;
+  gint filter_level;
+  gint sharpness_level;
 
-  gboolean mode_ref_delta_enabled;
-  gboolean mode_ref_delta_update;
-  gboolean update_ref_deltas[GST_VP9_MAX_REF_LF_DELTAS];
+  guint8 mode_ref_delta_enabled;
+  guint8 mode_ref_delta_update;
+  guint8 update_ref_deltas[GST_VP9_MAX_REF_LF_DELTAS];
   gint8 ref_deltas[GST_VP9_MAX_REF_LF_DELTAS];
-  gboolean update_mode_deltas[GST_VP9_MAX_MODE_LF_DELTAS];
+  guint8 update_mode_deltas[GST_VP9_MAX_MODE_LF_DELTAS];
   gint8 mode_deltas[GST_VP9_MAX_MODE_LF_DELTAS];
 };
 
@@ -267,18 +267,18 @@ struct _GstVp9LoopFilter {
 */
 struct _GstVp9SegmentationInfoData {
   /* SEG_LVL_ALT_Q */
-  gboolean alternate_quantizer_enabled;
+  guint8 alternate_quantizer_enabled;
   gint16 alternate_quantizer;
 
   /* SEG_LVL_ALT_LF */
-  gboolean alternate_loop_filter_enabled;
+  guint8 alternate_loop_filter_enabled;
   gint8 alternate_loop_filter;
 
   /* SEG_LVL_REF_FRAME */
-  gboolean reference_frame_enabled;
-  gboolean reference_frame;
+  guint8 reference_frame_enabled;
+  gint reference_frame;
 
-  gboolean reference_skip;
+  guint8 reference_skip;
 };
 
 /**
@@ -299,23 +299,23 @@ struct _GstVp9SegmentationInfoData {
  */
 struct _GstVp9SegmentationInfo {
   /* enable in setup_segmentation*/
-  gboolean  enabled;
+  guint8  enabled;
   /* update_map in setup_segmentation*/
-  gboolean update_map;
+  guint8 update_map;
   /* tree_probs exist or not*/
-  gboolean update_tree_probs[GST_VP9_SEG_TREE_PROBS];
+  guint8 update_tree_probs[GST_VP9_SEG_TREE_PROBS];
   guint8 tree_probs[GST_VP9_SEG_TREE_PROBS];
   /* pred_probs exist or not*/
-  gboolean update_pred_probs[GST_VP9_PREDICTION_PROBS];
+  guint8 update_pred_probs[GST_VP9_PREDICTION_PROBS];
   guint8 pred_probs[GST_VP9_PREDICTION_PROBS];
 
   /* abs_delta in setup_segmentation */
-  gboolean abs_delta;
+  guint8 abs_delta;
   /* temporal_update in setup_segmentation */
-  gboolean temporal_update;
+  guint8 temporal_update;
 
   /* update_data in setup_segmentation*/
-  gboolean update_data;
+  guint8 update_data;
   GstVp9SegmentationInfoData data[GST_VP9_MAX_SEGMENTS];
 };
 
@@ -360,43 +360,43 @@ struct _GstVp9SegmentationInfo {
 struct _GstVp9FrameHdr
 {
   guint profile;
-  gboolean show_existing_frame;
-  gboolean  frame_to_show;
+  guint8 show_existing_frame;
+  gint  frame_to_show;
   guint frame_type;
-  gboolean show_frame;
-  gboolean error_resilient_mode;
-  gboolean subsampling_x;
-  gboolean subsampling_y;
+  guint8 show_frame;
+  guint8 error_resilient_mode;
+  gint subsampling_x;
+  gint subsampling_y;
   guint32 width;
   guint32 height;
-  gboolean display_size_enabled;
+  guint8 display_size_enabled;
   guint32 display_width;
   guint32 display_height;
-  gboolean frame_context_idx;
+  guint frame_context_idx;
 
   guint bit_depth;
   guint color_space;
   guint color_range;
 
-  gboolean intra_only;
-  gboolean reset_frame_context;
-  gboolean refresh_frame_flags;
+  guint8 intra_only;
+  gint reset_frame_context;
+  gint refresh_frame_flags;
 
-  gboolean ref_frame_indices[GST_VP9_REFS_PER_FRAME];
-  gboolean ref_frame_sign_bias[GST_VP9_REFS_PER_FRAME];
-  gboolean allow_high_precision_mv;
-  GstVp9InterpFilter mcomp_filter_type;
+  gint ref_frame_indices[GST_VP9_REFS_PER_FRAME];
+  gint ref_frame_sign_bias[GST_VP9_REFS_PER_FRAME];
+  gint allow_high_precision_mv;
+  guint8 mcomp_filter_type;
 
-  gboolean refresh_frame_context;
+  gint refresh_frame_context;
   /* frame_parallel_decoding_mode in vp9 code*/
-  gboolean frame_parallel_decoding_mode;
+  gint frame_parallel_decoding_mode;
 
   GstVp9LoopFilter loopfilter;
   GstVp9QuantIndices quant_indices;
   GstVp9SegmentationInfo segmentation;
 
-  gboolean log2_tile_rows;
-  gboolean log2_tile_columns;
+  gint log2_tile_rows;
+  gint log2_tile_columns;
 
   guint32 first_partition_size;
   guint32 frame_header_length_in_bytes;
@@ -424,10 +424,10 @@ struct _GstVp9Segmentation
   gint16 chroma_ac_quant_scale;
   gint16 chroma_dc_quant_scale;
 
-  gboolean reference_frame_enabled;
-  guint8 reference_frame;
+  guint8 reference_frame_enabled;
+  gint reference_frame;
 
-  gboolean reference_skip;
+  guint8 reference_skip;
 };
 
 /**
@@ -445,7 +445,7 @@ struct _GstVp9Parser
   /* private stuct for tracking state variables across frames */
   void *priv;
 
-  gboolean lossless_flag;
+  guint lossless_flag;
   guint8 mb_segment_tree_probs[GST_VP9_SEG_TREE_PROBS];
   guint8 segment_pred_probs[GST_VP9_PREDICTION_PROBS];
   GstVp9Segmentation segmentation[GST_VP9_MAX_SEGMENTS];

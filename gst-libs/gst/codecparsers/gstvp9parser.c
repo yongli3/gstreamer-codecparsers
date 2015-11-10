@@ -72,7 +72,7 @@ typedef struct
   gint8 ref_deltas[GST_VP9_MAX_REF_LF_DELTAS];
   gint8 mode_deltas[GST_VP9_MAX_MODE_LF_DELTAS];
 
-  gboolean segmentation_abs_delta;
+  guint8 segmentation_abs_delta;
   GstVp9SegmentationInfoData segmentation[GST_VP9_MAX_SEGMENTS];
 
   ReferenceSize reference[GST_VP9_REF_FRAMES];
