@@ -353,6 +353,7 @@ struct _GstVp9SegmentationInfo {
  * @log2_tile_rows: tile row indicator
  * @log2_tile_columns:  tile column indicator
  * @first_partition_size: first partition size (after the uncompressed header)
+ * @lossless_flag: lossless mode decode
  * @frame_header_length_in_bytes: length of uncompressed header
  *
  * Frame header
@@ -399,6 +400,9 @@ struct _GstVp9FrameHdr
   gint log2_tile_columns;
 
   guint32 first_partition_size;
+
+  /* calculated values */
+  guint lossless_flag;
   guint32 frame_header_length_in_bytes;
 };
 
@@ -433,7 +437,6 @@ struct _GstVp9Segmentation
 /**
  * GstVp9Parser:
  * @priv: GstVp9ParserPrivate struct to keep track of state variables
- * @lossless_flag: lossless mode decode
  * @mb_segment_tree_probs: decoding tree probabilities
  * @segment_pred_probs: segement prediction probabiilties
  * @segmentation: Segemenation info
@@ -445,7 +448,6 @@ struct _GstVp9Parser
   /* private stuct for tracking state variables across frames */
   void *priv;
 
-  guint lossless_flag;
   guint8 mb_segment_tree_probs[GST_VP9_SEG_TREE_PROBS];
   guint8 segment_pred_probs[GST_VP9_PREDICTION_PROBS];
   GstVp9Segmentation segmentation[GST_VP9_MAX_SEGMENTS];

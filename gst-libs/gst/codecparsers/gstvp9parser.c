@@ -780,9 +780,8 @@ gst_vp9_parser_parse_frame_header (GstVp9Parser * parser,
 
   /* quantization header */
   parse_quantization (&frame_hdr->quant_indices, br);
- 
-  /* update lossless_flag */
-  parser->lossless_flag = frame_hdr->quant_indices.y_ac_qi == 0 &&
+  /* set lossless_flag */
+  frame_hdr->lossless_flag = frame_hdr->quant_indices.y_ac_qi == 0 &&
       frame_hdr->quant_indices.y_dc_delta == 0 &&
       frame_hdr->quant_indices.uv_dc_delta == 0 && frame_hdr->quant_indices.uv_ac_delta == 0;
 
